@@ -79,6 +79,21 @@ The test checks the happy paths (including base 16), the two throwing error case
 `nothrow` variant's `errno_save` reporting, and the `idx` prefix parse. It prints
 `all strict-stox tests passed` and exits 0.
 
+## Examples
+
+[`examples/demo.cc`](examples/demo.cc) is a runnable tour. A top-level CMake build
+produces it next to the test:
+
+```sh
+cmake -B build && cmake --build build && ./build/strict_stox_demo
+```
+
+It parses the valid inputs, then puts `std::stoi` / `strtol` and `strict_stoi` side
+by side on the inputs the loose parsers wave through (trailing junk, leading-then-junk,
+overflow, empty) so you can see exactly where strict rejects what loose accepts. It
+also shows the `nothrow` `errno_save` form for hot paths, and the opt-in `idx`
+prefix parse for when a prefix really is what you want.
+
 ## Provenance
 
 Extracted from [Xapiand](https://github.com/Kronuz/Xapiand). The standalone delta

@@ -20,4 +20,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_executable(strict_stox_test test/test.cc)
   target_link_libraries(strict_stox_test PRIVATE strict_stox)
   add_test(NAME strict_stox COMMAND strict_stox_test)
+
+  # A runnable tour of the library (not a test): build & run ./build/strict_stox_demo
+  add_executable(strict_stox_demo examples/demo.cc)
+  target_link_libraries(strict_stox_demo PRIVATE strict_stox)
 endif()
