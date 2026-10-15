@@ -1,5 +1,7 @@
 # strict-stox
 
+[![CI](https://github.com/Kronuz/strict-stox/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/strict-stox/actions/workflows/ci.yml)
+
 A small, header-only, dependency-free **strict numeric parsing** library for
 C++20, extracted from [Xapiand](https://github.com/Kronuz/Xapiand).
 
