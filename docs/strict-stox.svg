@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="904" height="687" viewBox="0 0 904 687">
+<rect width="904" height="687" rx="10" fill="#1f2329"/>
+<circle cx="20" cy="18" r="6" fill="#ff5f57"/><circle cx="40" cy="18" r="6" fill="#febc2e"/><circle cx="60" cy="18" r="6" fill="#28c840"/>
+<text x="452.0" y="22" fill="#8a919c" font-family="Menlo, Consolas, monospace" font-size="12" text-anchor="middle">strict_stox_demo</text>
+<g font-family="Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14" fill="#d8dee9" xml:space="preserve">
+<text x="18.0" y="56" >strict-stox demo</text>
+<text x="18.0" y="94" font-weight="bold">── happy paths: a number that consumes the whole string ──</text>
+<text x="18.0" y="113" >  strict_stoi(&quot;42&quot;)               = 42</text>
+<text x="18.0" y="132" >  strict_stoi(&quot;-7&quot;)               = -7</text>
+<text x="18.0" y="151" >  strict_stoul(&quot;100&quot;)             = 100</text>
+<text x="18.0" y="170" >  strict_stoll(&quot;9000000000&quot;)      = 9000000000</text>
+<text x="18.0" y="189" >  strict_stod(&quot;3.5&quot;)              = 3.5</text>
+<text x="18.0" y="208" >  strict_stoul(&quot;1f&quot;, nullptr, 16) = 31   (base 16)</text>
+<text x="18.0" y="246" font-weight="bold">── loose vs strict, on the inputs the loose parsers wave through ──</text>
+<text x="18.0" y="265" >  input                    std::stoi                                strict_stoi</text>
+<text x="18.0" y="284" >  -----                    ---------                                -----------</text>
+<text x="18.0" y="303" >  &quot;42abc&quot;                  accepted -&gt; 42  (ignored trailing &quot;abc&quot;) REJECTED (invalid_argument)</text>
+<text x="18.0" y="322" >  &quot;0x1f&quot;                   accepted -&gt; 0  (ignored trailing &quot;x1f&quot;)  REJECTED (invalid_argument)</text>
+<text x="18.0" y="341" >  &quot;  12  &quot;                 accepted -&gt; 12  (ignored trailing &quot;  &quot;)  REJECTED (invalid_argument)</text>
+<text x="18.0" y="360" >  &quot;99999999999999999999&quot;   out_of_range                             REJECTED (out_of_range)</text>
+<text x="18.0" y="379" >  &quot;&quot;                       invalid_argument                         REJECTED (invalid_argument)</text>
+<text x="18.0" y="398" >  &quot;nope&quot;                   invalid_argument                         REJECTED (invalid_argument)</text>
+<text x="18.0" y="417" >  (std::stoi keeps a prefix and silently drops the rest; strict_stoi insists on all-or-nothing)</text>
+<text x="18.0" y="455" font-weight="bold">── strtol: the C layer underneath, just as loose ──</text>
+<text x="18.0" y="474" >  strtol(&quot;42abc&quot;) = 42, stopped at &quot;abc&quot;  (you must check endptr yourself)</text>
+<text x="18.0" y="493" >  strtol(&quot;99999999999999999999&quot;) = 9223372036854775807, errno = ERANGE  (you must check errno yourself)</text>
+<text x="18.0" y="531" font-weight="bold">── nothrow: report via errno_save instead of throwing ──</text>
+<text x="18.0" y="550" >  strict_stoi(&amp;err, &quot;nope&quot;) -&gt; value 0, err = EINVAL</text>
+<text x="18.0" y="569" >  strict_stoi(&amp;err, &quot;55&quot;)   -&gt; value 55, err = 0  (cleared on success)</text>
+<text x="18.0" y="607" font-weight="bold">── idx: when you DO want a prefix, ask for it ──</text>
+<text x="18.0" y="626" >  strict_stoi(&quot;123rest&quot;, &amp;idx) -&gt; value 123, consumed 3 chars (&quot;rest&quot; left)</text>
+<text x="18.0" y="664" >done.</text>
+</g></svg>

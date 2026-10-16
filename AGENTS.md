@@ -12,7 +12,8 @@ strict_stox.hh               Strict numeric parsing (strict_stoi/stoul/stod/...)
 test/test.cc                 Runnable smoke test: happy paths, throwing cases, nothrow + idx variants.
 CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest test `strict_stox`.
 LICENSE                      MIT, Copyright (c) 2015-2019 Dubalu LLC.
-README.md                    What it is, install, usage.
+README.md                    What it is, install, quick start.
+docs/API.md                  What it provides and usage.
 ARCHITECTURE.md              Internal design of the Stox wrapper + STOXIFY macros, trade-offs.
 ```
 
