@@ -4,7 +4,7 @@
 // from strto* wins, and a value outside the narrower target type is ERANGE.
 // std::from_chars is a second oracle for decimal doubles. The inputs include
 // every string up to 5 characters over a mixed alphabet, each one padded in front
-// with 0..200 zeros, spaces or signs so the whole range around the old 63-byte
+// with 0..200 zeros, spaces or signs so the whole range around the frozen header's 63-byte
 // cut and the 128-byte stack buffer is covered, and long decimal strings.
 #include <cerrno>
 #include <charconv>

@@ -69,22 +69,34 @@ int main() {
 
 ## ⚡ Performance
 
-Plain input (an optional `-`, digits, and for floating point a fraction/exponent
-that a single correctly rounded multiply or divide can handle) is parsed directly,
-with no buffer copy and no `errno` traffic; everything else goes through `strto*` as
-before, with identical results, `errno` values, `idx` and exceptions. On Apple silicon (Apple clang 17, -O3), ns per element, previous header to now
-(`std::from_chars` for reference): `stoi` 1-9 digits 19.5 to 6.0 (7.0), `stoull` 1-19 digits
-26.6 to 6.5 (8.5), `stoul` base 16 25.8 to 4.7 (10.5), `stod` of short decimals 19.0 to 10.2
-(15.6; `fast_float` 7.5). Full-precision 17-digit doubles still take the `strto*` path
-(26.2 to 24.3).
-Run it with `cmake -B build -DSTRICT_STOX_BUILD_BENCH=ON && cmake --build build && ./build/strict_stox_bench`;
-`ctest` also runs a differential test against the previous header.
+Plain input (an optional `-`, digits, and for floating point a fraction and
+exponent that one correctly rounded multiply or divide can handle) is parsed
+directly, with no buffer copy and no `errno` traffic. Everything else goes
+through `strto*`, with the same results, `errno` values, `idx` and exceptions.
+`ctest` checks both paths against the frozen previous header and libc.
+
+Apple silicon, Apple clang 17, `-O3`, ns per element (measured 2026-10-30):
+
+| workload | strict-stox | `std::from_chars` |
+|---|---|---|
+| `stoi`, 1-9 digits | 6.0 | 7.0 |
+| `stoull`, 1-19 digits | 6.5 | 8.5 |
+| `stoul`, base 16 | 4.7 | 10.5 |
+| `stod`, short decimals | 10.2 | 15.6 (`fast_float` 7.5) |
+| `stod`, 17-digit doubles (`strto*` path) | 24.3 | |
+
+```sh
+cmake -B build -DSTRICT_STOX_BUILD_BENCH=ON && cmake --build build && ./build/strict_stox_bench
+```
+
+[CHANGELOG.md](CHANGELOG.md) has the timings before the fast path.
 
 ## 📚 Documentation
 
 - [docs/API.md](docs/API.md): the functions, `idx`, and the no-throw form.
 - [ARCHITECTURE.md](ARCHITECTURE.md): how the wrappers are generated.
 - [AGENTS.md](AGENTS.md): repository map and traps.
+- [CHANGELOG.md](CHANGELOG.md): what changed, and when.
 
 ## 🛠️ Building and testing
 
@@ -102,13 +114,3 @@ pass on every platform.
 
 MIT, Copyright (c) 2015-2019 Dubalu LLC. See [LICENSE](LICENSE). Extracted from
 [Xapiand](https://github.com/Kronuz/Xapiand).
-
-## Behavior change note
-
-Input is no longer cut at 63 bytes. Text of 64 bytes or more (100 leading zeros,
-long whitespace, a long decimal string) used to be rejected as trailing junk, or
-parsed as its first 63 bytes with a wrong `idx`; it now parses exactly like libc
-`strto*` on the same bytes. The fast path still handles only short clean input
-and everything else takes the `strto*` path. Tests: `test/long_test.cc`
-(libc and `std::from_chars` as oracles, exhaustive short strings padded across
-the old 63-byte and the 128-byte buffer boundaries).

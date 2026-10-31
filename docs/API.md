@@ -5,7 +5,7 @@
 One header, `strict_stox.hh`: strict wrappers over the C `strto*` family.
 `strict_stoi("42")` succeeds; `strict_stoi("42abc")` and an overflow each throw a
 standard exception. "Strict" means that with no `idx` argument the entire string
-must be a valid number, or it's an error — unlike `std::stoi`, which happily
+must be a valid number, or it's an error. `std::stoi`, by contrast, happily
 ignores trailing garbage. A `nothrow` variant reports via `errno` instead of
 throwing. Nothing behind it but the C++ (and C) standard library.
 

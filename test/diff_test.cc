@@ -3,12 +3,10 @@
 // (bit for bit), errno_save, idx, errno preservation and thrown exception, on
 // random and edge inputs for every function and several bases.
 //
-// One input class changed on purpose: text of 64 bytes or more. The frozen
-// header cut it at 63 bytes (a long run of zeros or spaces was rejected, a long
-// decimal parsed as its first 63 bytes with the wrong idx); the current header
-// parses every byte like libc strto*. For that class the comparison with the old
-// result is skipped here, test/long_test.cc checks the new result against libc,
-// and `deliberate_differences` below asserts old != new on constructed valid
+// One input class differs on purpose: text of 64 bytes or more, which the frozen
+// header cuts at 63 bytes (see CHANGELOG.md). For that class the comparison is
+// skipped here, test/long_test.cc checks the result against libc, and
+// `deliberate_differences` below asserts the two differ on constructed valid
 // inputs, so the exception cannot widen unnoticed.
 #include <algorithm>
 #include <cerrno>
@@ -80,7 +78,7 @@ static void check_all(std::mt19937_64& rng, const std::string& s) {
 	CMP(stold);
 }
 
-// Valid long inputs: the old header rejects or truncates them, the new one accepts.
+// Valid long inputs: the frozen header rejects or truncates them, the library accepts.
 static void deliberate_differences() {
 	for (int n : {64, 65, 100, 200}) {
 		std::string z(n, '0');

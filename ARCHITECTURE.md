@@ -18,7 +18,7 @@ One header, header-only, zero dependencies beyond the C++/C standard library:
 the whole input into a NUL-terminated buffer (128-byte stack buffer, heap for longer text), runs the `strto*`
 function, then enforces *strict* semantics:
 
-- If no `idx` out-param was given, the parse must consume the entire string —
+- With no `idx` out-param, the parse must consume the entire string;
   otherwise it's `EINVAL`.
 - With an `idx`, it reports how many characters were consumed and allows a prefix
   parse.
@@ -47,16 +47,16 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
   `-` (signed types only), then digits of the requested base 2..36, the whole input,
   1..63 bytes, no overflow of the function's own type. Whitespace, `+`, `0x`/octal
   prefixes, base 0 and invalid bases, trailing text, an embedded NUL, `-` on an
-  unsigned function (`strtoul("-1")` wraps) and every overflow take the old path.
-  A value outside the narrower target type (`stoi` of 3000000000) also takes it, so
-  `ERANGE` comes from the same code as before;
+  unsigned function (`strtoul("-1")` wraps) and every overflow take the `strto*`
+  path. A value outside the narrower target type (`stoi` of 3000000000) also takes
+  it, so `ERANGE` always comes from one place;
 - `stof`/`stod`: `[-]digits[.digits][e[+-]digits]` of at most 17 bytes whose
   mantissa is at most 2^53 (2^24 for `float`) and whose decimal exponent is within
   +-22 (+-10 for `float`). Then `mantissa * 10^k` or `mantissa / 10^k` is a single
   IEEE operation on exactly representable operands, which is correctly rounded
   (Clinger's fast path), so the result equals `strtod`'s bit for bit. `inf`, `nan`,
   hex floats, subnormal results, longer mantissas and a locale whose decimal point is
-  not `.` take the old path. Longer text (typically a full-precision 17 digit value) is
+  not `.` take the `strto*` path. Longer text (typically a full-precision 17 digit value) is
   declined at once. `stold` has no fast path;
 - the fast path applies only when the function is exactly `std::strtol` etc.; a
   `Stox` built around a custom function keeps its own semantics.
@@ -91,6 +91,5 @@ must be a number. Building it as a thin layer over `strto*` keeps it tiny and
 fast, and routing every parser through one `Stox` core means the strict check, the
 range check, and the `errno` discipline are written once. The throwing/nothrow
 split lets call sites that already sit inside a `try` use exceptions while hot,
-allocation-sensitive paths use the `errno_save` form. Swapping Xapiand's `THROW`
-macros for standard exceptions is what makes it stand alone with no project
-dependency.
+allocation-sensitive paths use the `errno_save` form. Standard exceptions in
+place of Xapiand's `THROW` macros let it stand alone with no project dependency.

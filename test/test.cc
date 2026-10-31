@@ -1,8 +1,8 @@
 // Smoke test for the standalone strict-stox library.
 //
 // Exercises strict_stox.hh: strict numeric parsing over the C strto* family. The
-// happy paths, the throwing error cases (which now raise std::invalid_argument /
-// std::out_of_range instead of Xapiand's THROW macros), the nothrow variant that
+// happy paths, the throwing error cases (std::invalid_argument /
+// std::out_of_range), the nothrow variant that
 // reports via errno_save, and the idx prefix-parse variant.
 //
 // Build via CMake: cmake -B build && cmake --build build && ctest --test-dir build
