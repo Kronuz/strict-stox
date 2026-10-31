@@ -15,7 +15,7 @@ One header, header-only, zero dependencies beyond the C++/C standard library:
 ## The `Stox` wrapper
 
 `Stox<F>` holds a name and a `strto*` function pointer. Its `_stox` core copies
-the input into a 64-byte stack buffer (truncated to 63 chars), runs the `strto*`
+the whole input into a NUL-terminated buffer (128-byte stack buffer, heap for longer text), runs the `strto*`
 function, then enforces *strict* semantics:
 
 - If no `idx` out-param was given, the parse must consume the entire string —

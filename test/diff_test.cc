@@ -2,6 +2,14 @@
 // pre-optimization header (test/strict_stox_old.hh, namespace old) in result
 // (bit for bit), errno_save, idx, errno preservation and thrown exception, on
 // random and edge inputs for every function and several bases.
+//
+// One input class changed on purpose: text of 64 bytes or more. The frozen
+// header cut it at 63 bytes (a long run of zeros or spaces was rejected, a long
+// decimal parsed as its first 63 bytes with the wrong idx); the current header
+// parses every byte like libc strto*. For that class the comparison with the old
+// result is skipped here, test/long_test.cc checks the new result against libc,
+// and `deliberate_differences` below asserts old != new on constructed valid
+// inputs, so the exception cannot widen unnoticed.
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +24,7 @@ namespace old {
 }
 
 static long failures = 0;
+static bool longcls = false;  // input of 64 bytes or more: result deliberately differs
 
 template <typename A>
 static bool same(const A& a, const A& b) {
@@ -37,7 +46,7 @@ bool same<long double>(const long double& a, const long double& b) {
 		errno = 77;                                                                                 \
 		auto r2 = old::strict_##NAME(&e2, s, useidx ? &i2 : nullptr __VA_OPT__(,) __VA_ARGS__);     \
 		bool k2 = errno == 77;                                                                      \
-		if (!same(r1, r2) || e1 != e2 || i1 != i2 || !k1 || !k2) {                                  \
+		if (!longcls && (!same(r1, r2) || e1 != e2 || i1 != i2 || !k1 || !k2)) {                                  \
 			if (++failures < 20) {                                                                  \
 				std::fprintf(stderr, "MISMATCH %s \"%s\" len=%zu idx=%d: err %d/%d idx %zu/%zu errno-kept %d/%d\n", #NAME, s.c_str(), s.size(), useidx, e1, e2, i1, i2, k1, k2); \
 			}                                                                                       \
@@ -45,10 +54,11 @@ bool same<long double>(const long double& a, const long double& b) {
 		std::string w1 = "none", w2 = "none";                                                       \
 		try { (void)strict_##NAME(s, nullptr __VA_OPT__(,) __VA_ARGS__); } catch (const std::exception& x) { w1 = x.what(); } \
 		try { (void)old::strict_##NAME(s, nullptr __VA_OPT__(,) __VA_ARGS__); } catch (const std::exception& x) { w2 = x.what(); } \
-		if (w1 != w2) { if (++failures < 20) { std::fprintf(stderr, "THROW MISMATCH %s \"%s\": %s | %s\n", #NAME, s.c_str(), w1.c_str(), w2.c_str()); } } \
+		if (!longcls && w1 != w2) { if (++failures < 20) { std::fprintf(stderr, "THROW MISMATCH %s \"%s\": %s | %s\n", #NAME, s.c_str(), w1.c_str(), w2.c_str()); } } \
 	} while (0)
 
 static void check_all(std::mt19937_64& rng, const std::string& s) {
+	longcls = s.size() >= 64;
 	static const int bases[] = {10, 16, 2, 8, 36, 0, 1, 37, -1};
 	for (int b : bases) {
 		if (b != 10 && b != 16 && (rng() % 4) != 0) { continue; }
@@ -65,7 +75,25 @@ static void check_all(std::mt19937_64& rng, const std::string& s) {
 	CMP(stold);
 }
 
+// Valid long inputs: the old header rejects or truncates them, the new one accepts.
+static void deliberate_differences() {
+	for (int n : {64, 65, 100, 200}) {
+		std::string z(n, '0');
+		int en = -1, eo = -1;
+		long long vn = strict_stoll(&en, z), vo = old::strict_stoll(&eo, z);
+		if (!(en == 0 && vn == 0 && eo == EINVAL && vo == 0)) { std::fprintf(stderr, "zeros %d: new %d/%lld old %d/%lld\n", n, en, vn, eo, vo); ++failures; }
+		std::string d = "1." + std::string(n, '0') + "5";   // 1.0...05 == 1.0 in double
+		double dn = strict_stod(&en, d), dold = old::strict_stod(&eo, d);
+		if (!(en == 0 && dn == 1.0 && eo == EINVAL && dold == 0.0)) { std::fprintf(stderr, "decimal %d: new %d/%g old %d/%g\n", n, en, dn, eo, dold); ++failures; }
+		std::size_t in = 0, io = 0;
+		strict_stoll(&en, z + "7xy", &in);
+		old::strict_stoll(&eo, z + "7xy", &io);
+		if (!(en == 0 && in == z.size() + 1 && io != in)) { std::fprintf(stderr, "idx %d: new %zu old %zu\n", n, in, io); ++failures; }
+	}
+}
+
 int main() {
+	deliberate_differences();
 	std::mt19937_64 rng(2024);
 	const char* alphabets[] = {
 		"0123456789", "0123456789", "0123456789-", "0123456789abcdefABCDEF", "0123456789abcdefxX+- ",

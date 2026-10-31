@@ -23,13 +23,12 @@
 
 #pragma once
 
-#include <algorithm>          // for std::min
 #include <cfloat>             // for FLT_EVAL_METHOD
 #include <clocale>            // for std::localeconv
 #include <cstdint>            // for std::uint64_t
 #include <cstdio>             // for std::size_t
 #include <cstdlib>            // for std::strto*
-#include <cstring>            // for std::strncpy
+#include <cstring>            // for std::memcpy
 #include <limits>             // for std::numeric_limits
 #include <stdexcept>          // for std::invalid_argument, std::out_of_range
 #include <string>             // for std::string
@@ -183,11 +182,22 @@ class Stox {
 
 	template <typename T, typename... Args>
 	auto _stox(std::true_type, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
-		char buf[64]{};
-		size_t size = std::min(str.size(), sizeof(buf) - 1);
-		std::strncpy(buf, str.data(), size);
+		// strto* needs a NUL-terminated copy of the whole input: short text goes to a stack
+		// buffer, longer text (long zero runs, long decimal strings) to the heap. An embedded
+		// NUL ends the number there, as for any C string.
+		char sbuf[128];
+		std::string heap;
+		const std::size_t size = str.size();
+		char* buf = sbuf;
+		if (size < sizeof(sbuf)) {
+			if (size != 0) { std::memcpy(sbuf, str.data(), size); }
+			sbuf[size] = '\0';
+		} else {
+			heap.assign(str.data(), size);
+			buf = heap.data();
+		}
 		auto end = buf + size;
-		auto ptr = const_cast<char*>(end);
+		auto ptr = end;
 		auto r = func(buf, &ptr, std::forward<Args>(args)...);
 		if (errno) return static_cast<decltype(r)>(0);
 		if (ptr == buf) {
@@ -196,7 +206,7 @@ class Stox {
 		}
 		if (idx) {
 			*idx = static_cast<size_t>(ptr - buf);
-		} else if (ptr != end || size != str.size()) {
+		} else if (ptr != end) {
 			errno = EINVAL;
 			return static_cast<decltype(r)>(0);
 		}

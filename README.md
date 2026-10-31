@@ -102,3 +102,13 @@ pass on every platform.
 
 MIT, Copyright (c) 2015-2019 Dubalu LLC. See [LICENSE](LICENSE). Extracted from
 [Xapiand](https://github.com/Kronuz/Xapiand).
+
+## Behavior change note
+
+Input is no longer cut at 63 bytes. Text of 64 bytes or more (100 leading zeros,
+long whitespace, a long decimal string) used to be rejected as trailing junk, or
+parsed as its first 63 bytes with a wrong `idx`; it now parses exactly like libc
+`strto*` on the same bytes. The fast path still handles only short clean input
+and everything else takes the `strto*` path. Tests: `test/long_test.cc`
+(libc and `std::from_chars` as oracles, exhaustive short strings padded across
+the old 63-byte and the 128-byte buffer boundaries).

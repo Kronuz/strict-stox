@@ -79,9 +79,10 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
 
 ## Traps
 
-- **Inputs are copied into a 64-byte stack buffer and truncated to 63 chars**
-  before parsing (it uses `strto*` under the hood). That's original behavior;
-  don't be surprised by it, and don't grow the buffer without reason.
+- **Inputs are copied whole into a NUL-terminated buffer** (128-byte stack
+  buffer, heap above that) before `strto*` runs, so any length parses like libc.
+  Older versions truncated at 63 bytes (a run of 100 zeros was `EINVAL`); that
+  was a bug and is fixed. An embedded NUL still ends the number there.
 - **`errno` is saved and restored around each parse.** The wrapper swaps the
   caller's `errno` out, runs the parse, and swaps it back, reporting through the
   return value / `errno_save`. Don't read the global `errno` after a call

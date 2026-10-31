@@ -27,6 +27,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(strict_stox_diff_test PRIVATE strict_stox)
   add_test(NAME strict_stox_diff COMMAND strict_stox_diff_test)
 
+  # Arbitrary-length input against libc strto* and std::from_chars.
+  add_executable(strict_stox_long_test test/long_test.cc)
+  target_link_libraries(strict_stox_long_test PRIVATE strict_stox)
+  add_test(NAME strict_stox_long COMMAND strict_stox_long_test)
+
   # Benchmark (not run by ctest). Comparators (std::from_chars, optionally
   # abseil and fast_float when installed) are only linked by this target.
   option(STRICT_STOX_BUILD_BENCH "Build bench/bench.cc" OFF)
