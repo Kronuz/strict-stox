@@ -75,21 +75,27 @@ directly, with no buffer copy and no `errno` traffic. Everything else goes
 through `strto*`, with the same results, `errno` values, `idx` and exceptions.
 `ctest` checks both paths against the frozen previous header and libc.
 
-Apple silicon, Apple clang 17, `-O3`, ns per element (measured 2026-10-30):
+Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
+(median of five runs under `quiet strict` at `6d8731f`; each run is the best of 7
+samples over a pool of 1024 inputs):
 
 | workload | strict-stox | `std::from_chars` |
 |---|---|---|
-| `stoi`, 1-9 digits | 6.0 | 7.0 |
-| `stoull`, 1-19 digits | 6.5 | 8.5 |
-| `stoul`, base 16 | 4.7 | 10.5 |
-| `stod`, short decimals | 10.2 | 15.6 (`fast_float` 7.5) |
-| `stod`, 17-digit doubles (`strto*` path) | 24.3 | |
+| `stoi`, 1-9 digits | 5.9 | 7.1 (`absl::SimpleAtoi` 5.9) |
+| `stoull`, 1-19 digits | 5.8 | 8.7 |
+| `stoul`, base 16 | 4.7 | 11.0 |
+| `stod`, short decimals | 10.3 | 15.7 (`fast_float` 7.6) |
+| `stod`, 17-digit doubles (`strto*` path) | 22.8 | 26.2 (`fast_float` 10.5) |
 
 ```sh
-cmake -B build -DSTRICT_STOX_BUILD_BENCH=ON && cmake --build build && ./build/strict_stox_bench
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \
+  -DCMAKE_CXX_FLAGS="-DHAVE_FAST_FLOAT -I/path/to/fast_float/include"
+cmake --build build && ./build/strict_stox_bench
 ```
 
-[CHANGELOG.md](CHANGELOG.md) has the timings before the fast path.
+The `absl::SimpleAtoi` figure appears when abseil is installed, and the `fast_float`
+figures need `-DHAVE_FAST_FLOAT` and its include path. The runs agree within 5%,
+except one `stoull` run (6.9).
 
 ## 📚 Documentation
 

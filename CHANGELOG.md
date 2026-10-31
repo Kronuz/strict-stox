@@ -6,6 +6,16 @@ release tags yet, so entries are dated.
 
 ## 2026-10-31
 
+### Documentation
+
+- The README table is measured on an Apple M4 Pro (Apple clang 17, `-O3`) at `6d8731f`,
+  with the benchmark command and its fast_float flags. It replaces the 2026-10-30
+  figures on an unrecorded Apple-silicon machine: `stoi` 6.0, `stoull` 6.5, `stoul`
+  base 16 4.7, short-decimal `stod` 10.2 and 17-digit `stod` 24.3 ns (`std::from_chars`
+  7.0, 8.5, 10.5 and 15.6; `fast_float` 7.5 on short decimals). The same M4 run
+  measures the previous header (`test/strict_stox_old.hh`) at 19.8, 27.4, 27.0, 19.6
+  and 26.3 ns on those five rows.
+
 ### Fixed
 
 - **Input of any length parses.** The wrapper copied the text into a 64-byte
