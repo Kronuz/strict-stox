@@ -67,6 +67,19 @@ int main() {
 - ✅ Parsing numbers from users, files, or the network, where `"42abc"` must fail.
 - ❌ Locale-aware or grouped input (`"1,000"`): it uses the C `strto*` rules.
 
+## ⚡ Performance
+
+Plain input (an optional `-`, digits, and for floating point a fraction/exponent
+that a single correctly rounded multiply or divide can handle) is parsed directly,
+with no buffer copy and no `errno` traffic; everything else goes through `strto*` as
+before, with identical results, `errno` values, `idx` and exceptions. On Apple silicon (Apple clang 17, -O3), ns per element, previous header to now
+(`std::from_chars` for reference): `stoi` 1-9 digits 19.5 to 6.0 (7.0), `stoull` 1-19 digits
+26.6 to 6.5 (8.5), `stoul` base 16 25.8 to 4.7 (10.5), `stod` of short decimals 19.0 to 10.2
+(15.6; `fast_float` 7.5). Full-precision 17-digit doubles still take the `strto*` path
+(26.2 to 24.3).
+Run it with `cmake -B build -DSTRICT_STOX_BUILD_BENCH=ON && cmake --build build && ./build/strict_stox_bench`;
+`ctest` also runs a differential test against the previous header.
+
 ## 📚 Documentation
 
 - [docs/API.md](docs/API.md): the functions, `idx`, and the no-throw form.

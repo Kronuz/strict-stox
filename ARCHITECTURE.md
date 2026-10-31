@@ -36,6 +36,35 @@ Two public methods sit on top: `stox_nothrow` writes the parse's `errno` into an
 into `std::invalid_argument` and `ERANGE` into `std::out_of_range`, with the
 message built by plain string concatenation.
 
+## The clean-input fast path
+
+Before the `strto*` path runs, `stox_nothrow` and `stox_throw` try a direct parse
+(`strict_stox_detail::fast_int`, `fast_fp`) that touches neither `errno` nor a
+buffer. It only accepts what every `strto*` reads the same way, and declines
+(falls back to the path above, which then decides everything) otherwise:
+
+- integers (`stoi`, `stou`, `stol`, `stoul`, `stoll`, `stoull`, `stoz`): an optional
+  `-` (signed types only), then digits of the requested base 2..36, the whole input,
+  1..63 bytes, no overflow of the function's own type. Whitespace, `+`, `0x`/octal
+  prefixes, base 0 and invalid bases, trailing text, an embedded NUL, `-` on an
+  unsigned function (`strtoul("-1")` wraps) and every overflow take the old path.
+  A value outside the narrower target type (`stoi` of 3000000000) also takes it, so
+  `ERANGE` comes from the same code as before;
+- `stof`/`stod`: `[-]digits[.digits][e[+-]digits]` of at most 17 bytes whose
+  mantissa is at most 2^53 (2^24 for `float`) and whose decimal exponent is within
+  +-22 (+-10 for `float`). Then `mantissa * 10^k` or `mantissa / 10^k` is a single
+  IEEE operation on exactly representable operands, which is correctly rounded
+  (Clinger's fast path), so the result equals `strtod`'s bit for bit. `inf`, `nan`,
+  hex floats, subnormal results, longer mantissas and a locale whose decimal point is
+  not `.` take the old path. Longer text (typically a full-precision 17 digit value) is
+  declined at once. `stold` has no fast path;
+- the fast path applies only when the function is exactly `std::strtol` etc.; a
+  `Stox` built around a custom function keeps its own semantics.
+
+`test/diff_test.cc` compares the fast path with the frozen previous header
+(`test/strict_stox_old.hh`) on random and edge inputs: value (bitwise), `errno_save`,
+`idx`, `errno` preservation and exception text.
+
 ## The `STOXIFY` macros
 
 `STOXIFY` and `STOXIFY_BASE` stamp out the two free-function entry points for each

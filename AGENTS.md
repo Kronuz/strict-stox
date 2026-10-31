@@ -64,6 +64,11 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   outside `int`'s `numeric_limits`. The `T` template argument on each `STOXIFY`
   is what drives that check; keep it correct per function.
 
+- **The fast path must give the answer `strto*` gives, or decline.** It is correct only
+  for inputs it fully understands (see ARCHITECTURE). When widening it (more syntax,
+  bigger exponents), extend `test/diff_test.cc`'s alphabets and edge list, and
+  keep `ERANGE`/`EINVAL`/`idx` decisions in the old path.
+
 ## How to extend
 
 - **Add a parser.** Add a `STOXIFY(name, strto_func, T)` (or `STOXIFY_BASE` for
