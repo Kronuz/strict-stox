@@ -37,3 +37,17 @@ pass an `idx` to parse a prefix and learn how many characters were consumed. The
 throwing overload raises `std::invalid_argument` on a bad parse and
 `std::out_of_range` on overflow; the `nothrow` overload (first argument an
 `int* errno_save`) surfaces `EINVAL` / `ERANGE` through that out-param instead.
+
+## Floating point and the locale
+
+`strict_stof` and `strict_stod` give exactly what `strtof` / `strtod` give for the
+same bytes (value bits, end position, `ERANGE`), including the decimal point of the
+current locale: in a locale where it is `,`, `"1.5"` is `1` followed by trailing text.
+Plain decimals are converted without calling `strtod`, but only after asking the C
+library for that decimal point (`nl_langinfo(RADIXCHAR)`, a few nanoseconds).
+
+A program that never leaves the `"C"` locale can skip the question by defining
+`STRICT_STOX_C_LOCALE` before including the header (CMake: `-DSTRICT_STOX_C_LOCALE=ON`):
+plain decimals are then always read with `.`, whatever `setlocale` says. Everything
+`strtod` handles itself (`inf`, `nan`, hex floats, subnormal and overflowing results,
+trailing text) still follows the locale.

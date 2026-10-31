@@ -9,6 +9,14 @@ project(strict_stox LANGUAGES CXX)
 add_library(strict_stox INTERFACE)
 target_include_directories(strict_stox INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(strict_stox INTERFACE cxx_std_20)
+# stod/stof ask the C library for the locale's decimal point before they read a '.',
+# like strtod does (a libc call as costly as parsing a short number). A program that
+# never leaves the "C" locale can skip it: plain decimals are then read with '.' in
+# every locale, and strtod still decides everything else.
+option(STRICT_STOX_C_LOCALE "Read '.' as the decimal point whatever the locale says" OFF)
+if(STRICT_STOX_C_LOCALE)
+  target_compile_definitions(strict_stox INTERFACE STRICT_STOX_C_LOCALE=1)
+endif()
 # Alias so consumers can link `strict_stox::strict_stox` whether they add this
 # via add_subdirectory or FetchContent.
 add_library(strict_stox::strict_stox ALIAS strict_stox)
@@ -32,8 +40,34 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(strict_stox_long_test PRIVATE strict_stox)
   add_test(NAME strict_stox_long COMMAND strict_stox_long_test)
 
+  # The floating point fast path against libc strtod/strtof and std::from_chars: hard cases,
+  # exact halfway points of every binade, random texts, the 5^q table against big integers.
+  # `strict_stox_fp_test --stress N` and `--f32` are the long runs (not in ctest).
+  find_package(Threads)
+  add_executable(strict_stox_fp_test test/fp_test.cc)
+  target_link_libraries(strict_stox_fp_test PRIVATE strict_stox)
+  if(Threads_FOUND)
+    target_link_libraries(strict_stox_fp_test PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME strict_stox_fp COMMAND strict_stox_fp_test)
+  # The same code without the 128 bit multiply, for compilers that lack __int128.
+  add_executable(strict_stox_fp_portable_test test/fp_test.cc)
+  target_compile_definitions(strict_stox_fp_portable_test PRIVATE STRICT_STOX_PORTABLE_MUL64=1)
+  target_link_libraries(strict_stox_fp_portable_test PRIVATE strict_stox)
+  if(Threads_FOUND)
+    target_link_libraries(strict_stox_fp_portable_test PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME strict_stox_fp_portable COMMAND strict_stox_fp_portable_test)
+
+  # The 5^q table in strict_stox.hh is generated: it must match tools/gen_pow5.py.
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME strict_stox_pow5_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_pow5.py --check)
+  endif()
+
   # Benchmark (not run by ctest). Comparators (std::from_chars, optionally
   # abseil and fast_float when installed) are only linked by this target.
+  # fast_float: -DSTRICT_STOX_FAST_FLOAT_DIR=<dir containing fast_float/fast_float.h>
   option(STRICT_STOX_BUILD_BENCH "Build bench/bench.cc" OFF)
   if(STRICT_STOX_BUILD_BENCH)
     add_executable(strict_stox_bench bench/bench.cc)
@@ -43,6 +77,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     if(absl_FOUND)
       target_compile_definitions(strict_stox_bench PRIVATE HAVE_ABSL=1)
       target_link_libraries(strict_stox_bench PRIVATE absl::strings)
+    endif()
+    find_path(STRICT_STOX_FAST_FLOAT_DIR fast_float/fast_float.h)
+    if(STRICT_STOX_FAST_FLOAT_DIR)
+      target_compile_definitions(strict_stox_bench PRIVATE HAVE_FAST_FLOAT=1)
+      target_include_directories(strict_stox_bench PRIVATE "${STRICT_STOX_FAST_FLOAT_DIR}")
     endif()
   endif()
 

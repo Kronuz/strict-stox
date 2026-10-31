@@ -12,8 +12,11 @@ strict_stox.hh               Strict numeric parsing (strict_stoi/stoul/stod/...)
 test/test.cc                 Runnable smoke test: happy paths, throwing cases, nothrow + idx variants.
 test/diff_test.cc            Differential test against test/strict_stox_old.hh, the frozen pre-fast-path header (never edit it).
 test/long_test.cc            Inputs of any length against libc strto* and std::from_chars.
+test/fp_test.cc              The floating point fast path against libc strtod/strtof and std::from_chars: table vs big integers, hard cases, exact halfway points, random text; `--stress N`, `--f32` for the long runs.
+tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
+tools/fp_mutants.py          Breaks the fast path in 34 ways and requires test/fp_test.cc to fail on each.
 bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH).
-CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`.
+CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                 Behavior and performance changes, dated.
 README.md                    What it is, install, quick start.
@@ -72,6 +75,16 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   for inputs it fully understands (see ARCHITECTURE). When widening it (more syntax,
   bigger exponents), extend `test/diff_test.cc`'s alphabets and edge list, and
   keep `ERANGE`/`EINVAL`/`idx` decisions in the `strto*` path.
+- **Floating point: accepted means identical to libc.** `fast_fp` accepts a text only
+  when `strtod` (`strtof`) would return the same bits, consume the whole text and set no
+  `errno`. A result that is subnormal, zero from a non-zero mantissa or infinite is
+  declined (that is where `ERANGE` lives), as is any rounding that the truncated table
+  entry cannot decide. Never make it round "mostly right": decline instead.
+  `test/fp_test.cc` enforces the property; run `tools/fp_mutants.py` after touching
+  `el_convert`, `fp_long` or the digit scanner.
+- **The 5^q table is generated.** Edit `tools/gen_pow5.py`, run it with `--write`, and
+  the `strict_stox_pow5_table` test (`--check`) keeps the header honest. The binary
+  exponent is `(q * 217706) >> 16`; the generator proves it for every `q` in range.
 
 ## How to extend
 
@@ -91,6 +104,12 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   caller's `errno` out, runs the parse, and swaps it back, reporting through the
   return value / `errno_save`. Don't read the global `errno` after a call
   expecting the parse's value; use the `nothrow` overload's out-param.
+- **The decimal point is read from the locale, and that costs.** `strtod` honors
+  `LC_NUMERIC`, so the fast path asks `std::localeconv()` before it takes a text
+  with a `.` (3-14 ns, as much as the parse). `STRICT_STOX_C_LOCALE` removes the call
+  and makes plain decimals read `.` in every locale; leave it undefined by default.
+- **The fast path assumes round-to-nearest.** It tests the rounding mode on every call
+  (`rounds_to_nearest`) and declines otherwise, because `strtod` honors `fesetround`.
 
 ## Standalone vs. Xapiand
 
