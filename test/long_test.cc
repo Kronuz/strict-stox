@@ -66,8 +66,10 @@ static void expect(const char* name, F func, const std::string& s, bool useidx, 
 		v = static_cast<R>(strict_stoi(&e, s, useidx ? &i : nullptr, a...));
 	}
 	++checks;
-	bool ok = errno == 4242 && e == oerr && (oerr != 0 || i == oidx || !useidx)
-		&& (std::memcmp(&v, &ov, sizeof(R)) == 0 || (v != v && ov != ov));
+	// Compare by value for long double (x87 padding bytes are unspecified); by bits otherwise (-0.0, NaN).
+	bool same = std::is_same_v<R, long double> ? (v == ov || (v != v && ov != ov))
+		: (std::memcmp(&v, &ov, sizeof(R)) == 0 || (v != v && ov != ov));
+	bool ok = errno == 4242 && e == oerr && (oerr != 0 || i == oidx || !useidx) && same;
 	if (!ok) {
 		if (++failures < 20) {
 			std::fprintf(stderr, "MISMATCH %s len=%zu idx=%d \"%.40s\": err %d/%d idx %zu/%zu\n", name, s.size(), useidx, s.c_str(), e, oerr, i, oidx);
@@ -103,7 +105,10 @@ static void all(const std::string& s) {
 
 static void from_chars_check(const std::string& s) {
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
-	// A plain decimal: value must equal std::from_chars (correctly rounded).
+	// A plain decimal: value must equal std::from_chars (correctly rounded). libstdc++ 11's
+	// floating from_chars aborts on some inputs of about a thousand bytes, so it is only
+	// asked about shorter text (the longer ones are still checked against libc strtod).
+	if (s.size() > 400) { return; }
 	double want = 0;
 	auto r = std::from_chars(s.data(), s.data() + s.size(), want);
 	if (r.ec != std::errc() || r.ptr != s.data() + s.size()) { return; }

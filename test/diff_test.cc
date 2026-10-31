@@ -10,7 +10,12 @@
 // result is skipped here, test/long_test.cc checks the new result against libc,
 // and `deliberate_differences` below asserts old != new on constructed valid
 // inputs, so the exception cannot widen unnoticed.
+#include <algorithm>
 #include <cerrno>
+#include <iterator>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
