@@ -38,7 +38,7 @@
 #include <string_view>        // for std::string_view
 #include <errno.h>            // for errno
 #include <type_traits>        // for std::true_type, std::false_type
-#include <utility>            // for std::swap
+#include <utility>            // for std::forward
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>           // for _umul128, __umulh
 #endif
@@ -641,10 +641,6 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 			};
 			if (w <= (1ULL << 53) && q <= 22 && q >= -22) {
 				b = std::bit_cast<bits_t>(q >= 0 ? static_cast<double>(w) * pow10[q] : static_cast<double>(w) / pow10[-q]);
-			} else if (q == 0) {
-				// An integer of at most 19 digits: the conversion of a 64 bit integer is one correctly rounded operation, ties to even,
-				// and the table would decline the exact halfway points.
-				b = std::bit_cast<bits_t>(static_cast<double>(w));
 			} else if (!el_convert<R>(w, static_cast<int>(q), b)) {
 				return false;
 			}
@@ -679,6 +675,14 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 // A conversion that does not fit the fixed big integers is declined.
 
 inline constexpr int slow_digits = 768;
+
+#ifdef STRICT_STOX_COUNT_LIBC
+// Test seam: the texts that enter fp_decline (fast_fp declined them), the calls of el_candidate (the table in the exact path), and the
+// calls of the strto* path of the wrapper.
+inline thread_local std::size_t decline_calls = 0;
+inline thread_local std::size_t candidate_calls = 0;
+inline thread_local std::size_t strto_calls = 0;
+#endif
 
 struct Pow5Small {
 	std::uint64_t v[28];  // 5^0 .. 5^27
@@ -852,6 +856,9 @@ inline int cmp_small(std::uint64_t D, int q, std::uint64_t t, std::ptrdiff_t g) 
 enum : int { cand_normal = 0, cand_below = 1, cand_unknown = 2 };
 template <typename R>
 inline int el_candidate(std::uint64_t w, int q, std::uint64_t& m0, int& eq) noexcept {
+#ifdef STRICT_STOX_COUNT_LIBC
+	++candidate_calls;
+#endif
 	using tr = fp_traits<R>;
 	constexpr int nb = tr::mant + 2;
 	const int lz = clz64(w);
@@ -951,6 +958,12 @@ inline int fp_slow(R& out, std::string_view s) noexcept {
 		w = wall;
 		nd = digits10(wall);
 		q -= static_cast<std::ptrdiff_t>(fe - fb);
+		if (q == 0) {
+			// An integer of at most 19 digits is below 2^64: one correctly rounded conversion (the mode is to nearest, ties to even), so
+			// the exact halfway points the table declined need no comparison.
+			out = std::bit_cast<R>(static_cast<bits_t>(std::bit_cast<bits_t>(static_cast<R>(wall)) | (static_cast<bits_t>(neg) << top)));
+			return 1;
+		}
 	} else {
 		have_dg = true;
 		bool sticky = false;
@@ -1121,12 +1134,6 @@ inline bool starts_decimal(const char* p, std::size_t n) noexcept {
 	return c - '0' <= 9 || c == '.';
 }
 
-#ifdef STRICT_STOX_COUNT_LIBC
-// Test seam: the texts that enter fp_decline (fast_fp declined them), and the calls of the strto* path of the wrapper.
-inline thread_local std::size_t decline_calls = 0;
-inline thread_local std::size_t strto_calls = 0;
-#endif
-
 // What follows a declined fast_fp, out of line so that the code the short texts run (the wrapper around fast_fp) is small and as
 // it was: the exact path, then its result for the caller. 0: the strto* path decides; 1: out holds the value and idx the whole
 // text; 2: ERANGE (out is 0, idx untouched).
@@ -1178,7 +1185,7 @@ class Stox {
 	F func;
 
 	template <typename T, typename... Args>
-	auto _stox(std::true_type, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
+	auto _stox(std::true_type, int& err, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
 #ifdef STRICT_STOX_COUNT_LIBC
 		++strict_stox_detail::strto_calls;
 #endif
@@ -1199,26 +1206,26 @@ class Stox {
 		auto end = buf + size;
 		auto ptr = end;
 		auto r = func(buf, &ptr, std::forward<Args>(args)...);
-		if (errno) return static_cast<decltype(r)>(0);
+		if (err) return static_cast<decltype(r)>(0);
 		if (ptr == buf) {
-			errno = EINVAL;
+			err = EINVAL;
 			return static_cast<decltype(r)>(0);
 		}
 		if (idx) {
 			*idx = static_cast<size_t>(ptr - buf);
 		} else if (ptr != end) {
-			errno = EINVAL;
+			err = EINVAL;
 			return static_cast<decltype(r)>(0);
 		}
 		return r;
 	}
 
 	template <typename T, typename... Args>
-	auto _stox(std::false_type, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
-		auto r = _stox<void>(std::true_type{}, str, idx, std::forward<Args>(args)...);
-		if (errno) return static_cast<T>(0);
+	auto _stox(std::false_type, int& err, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
+		auto r = _stox<void>(std::true_type{}, err, str, idx, std::forward<Args>(args)...);
+		if (err) return static_cast<T>(0);
 		if (r < std::numeric_limits<T>::min() || std::numeric_limits<T>::max() < r) {
-			errno = ERANGE;
+			err = ERANGE;
 			return static_cast<T>(0);
 		}
 		return static_cast<T>(r);
@@ -1260,7 +1267,6 @@ class Stox {
 			using R = std::invoke_result_t<F, const char*, char**>;
 			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
 				if (!(_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return 0; }
-				if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return 0; }
 				R r;
 				if (strict_stox_detail::fast_fp(r, str)) {
 					out = static_cast<Out>(r);
@@ -1268,6 +1274,7 @@ class Stox {
 					return 1;
 				}
 				static_assert(std::is_same_v<Out, R>);
+				if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return 0; }
 				return strict_stox_detail::fp_decline<R>(out, str, idx);
 			}
 		}
@@ -1279,6 +1286,8 @@ public:
 		: name(_name),
 		  func(_func) { }
 
+	// The caller's errno is saved and cleared around the strto* path. `errno` is one object per thread, but a libc may spell it as a call
+	// (macOS: `*__error()`), so it is named once here and passed down.
 	template <typename T, typename... Args>
 	auto stox_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args&&... args) {
 		result_t<T, Args...> fast;
@@ -1286,12 +1295,14 @@ public:
 			if (errno_save != nullptr) { *errno_save = status == 2 ? ERANGE : 0; }
 			return fast;
 		}
-		auto _errno = errno;
-		errno = 0;
-		auto r = _stox<T>(std::is_same<void, T>{}, str, idx, std::forward<Args>(args)...);
-		std::swap(errno, _errno);
+		int& err = errno;
+		const int saved = err;
+		err = 0;
+		auto r = _stox<T>(std::is_same<void, T>{}, err, str, idx, std::forward<Args>(args)...);
+		const int got = err;
+		err = saved;
 		if (errno_save != nullptr) {
-			*errno_save = _errno;
+			*errno_save = got;
 		}
 		return r;
 	}
@@ -1303,11 +1314,13 @@ public:
 			if (status == 2) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
 			return fast;
 		}
-		auto _errno = errno;
-		errno = 0;
-		auto r = _stox<T>(std::is_same<void, T>{}, str, idx, std::forward<Args>(args)...);
-		std::swap(errno, _errno);
-		switch (_errno) {
+		int& err = errno;
+		const int saved = err;
+		err = 0;
+		auto r = _stox<T>(std::is_same<void, T>{}, err, str, idx, std::forward<Args>(args)...);
+		const int got = err;
+		err = saved;
+		switch (got) {
 			case EINVAL:
 				throw std::invalid_argument(std::string(name) + ": Cannot convert value: " + std::string(str));
 			case ERANGE:

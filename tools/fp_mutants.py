@@ -203,10 +203,13 @@ MUTANTS = {
     "slow_start_sign_dot": ("c = static_cast<unsigned char>(p[1]);\n\t}\n\treturn c - '0' <= 9 || c == '.';", "c = static_cast<unsigned char>(p[1]);\n\t\treturn c - '0' <= 9;\n\t}\n\treturn c - '0' <= 9 || c == '.';"),
     "slow_start_digit_top": ("return c - '0' <= 9 || c == '.';", "return c - '0' < 9 || c == '.';"),
     "slow_start_always": ("return c - '0' <= 9 || c == '.';", "return true;"),
-    # an integer of at most 19 digits: one conversion of a 64 bit integer (fp_test)
-    "int_tie_truncate": ("b = std::bit_cast<bits_t>(static_cast<double>(w));", "b = std::bit_cast<bits_t>(static_cast<double>(w & ~1ULL));"),
-    "int_tie_exponent": ("} else if (q == 0) {", "} else if (q <= 0) {"),
-    "int_tie_declined": ("} else if (q == 0) {", "} else if (false) {"),
+    # an integer of at most 19 digits: one conversion of a 64 bit integer, no table (test/slow_test.cc)
+    "slow_int_truncate": ("out = std::bit_cast<R>(static_cast<bits_t>(std::bit_cast<bits_t>(static_cast<R>(wall)) | (static_cast<bits_t>(neg) << top)));\n\t\t\treturn 1;",
+                          "out = std::bit_cast<R>(static_cast<bits_t>(std::bit_cast<bits_t>(static_cast<R>(wall & ~1ULL)) | (static_cast<bits_t>(neg) << top)));\n\t\t\treturn 1;"),
+    "slow_int_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(std::bit_cast<bits_t>(static_cast<R>(wall)) | (static_cast<bits_t>(neg) << top)));\n\t\t\treturn 1;",
+                      "out = std::bit_cast<R>(static_cast<bits_t>(std::bit_cast<bits_t>(static_cast<R>(wall))));\n\t\t\treturn 1;"),
+    "slow_int_exponent": ("\t\tif (q == 0) {\n\t\t\t// An integer of at most 19 digits", "\t\tif (q <= 0) {\n\t\t\t// An integer of at most 19 digits"),
+    "slow_int_declined": ("\t\tif (q == 0) {\n\t\t\t// An integer of at most 19 digits", "\t\tif (false) {\n\t\t\t// An integer of at most 19 digits"),
 }
 
 

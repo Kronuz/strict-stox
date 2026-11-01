@@ -704,6 +704,42 @@ static void test_int_range() {
 	if (D::strto_calls != s0) { FAIL("the limits of the types reached strto*"); }
 }
 
+// An integer of at most 19 digits is below 2^64, so the exact path converts it with one correctly rounded conversion and asks the table
+// nothing: the exact halfway points of the doubles from 2^53 to 2^63 (and the floats from 2^24), the integers next to them, with a sign, an
+// exponent or a fraction that leaves the value an integer. Values are libc's, and no el_candidate call and no libc call is made.
+template <typename R>
+static void test_integer_ties(std::mt19937_64& rng) {
+	constexpr int mant = D::fp_traits<R>::mant;
+	std::vector<std::string> texts;
+	for (int e = 1; e <= 63 - mant - 1; ++e) {
+		for (int i = 0; i < 12; ++i) {
+			const std::uint64_t m = (1ULL << mant) + (i == 0 ? 0 : i == 1 ? (1ULL << mant) - 1 : rng() % (1ULL << mant));
+			const std::uint64_t v = (2 * m + 1) << (e - 1);  // halfway between m 2^e and (m + 1) 2^e
+			for (const std::uint64_t x : {v, v - 1, v + 1}) { texts.push_back(std::to_string(x)); }
+		}
+	}
+	for (const char* t : {"9223372036854775808", "9223372036854775809", "9999999999999999999", "18014398509481986", "16777217", "16777219", "33554434"}) { texts.push_back(t); }
+	const std::size_t base = texts.size();
+	for (std::size_t i = 0; i < base; ++i) {  // the same integers written with an exponent or a fraction
+		const std::string& t = texts[i];
+		if (t.size() < 19) { texts.push_back(t + "e0"); }
+		if (t.size() < 18) { texts.push_back(t + "0e-1"); }
+		if (t.size() > 3) { texts.push_back(t.substr(0, t.size() - 2) + "." + t.substr(t.size() - 2) + "e2"); }
+	}
+	for (const std::string& pos : texts) {
+		for (const std::string& t : {pos, "-" + pos}) {
+			const std::size_t c0 = D::candidate_calls;
+			const Api a = api<R>(t);
+			// (Text of at most 19 digits is safe for libc: Apple's strtod aborts on texts of 40 digits and more.)
+			if (!oracle::same(a.r, oracle::libc_result<R>(t, false), false)) { FAIL("%s %s: differs from libc", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str()); }
+			if (a.libc) { FAIL("%s %s: reached libc", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str()); }
+			// A text of at most 19 digits whose value is the integer needs no table: that is the shortcut. (The fast path takes most
+			// of them first, and the table the rest; the halfway points are the texts that reach the shortcut.)
+			if (t.find_first_of(".e") == std::string::npos && D::candidate_calls != c0) { FAIL("%s %s: asked the table", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str()); }
+		}
+	}
+}
+
 // Zero texts, straight into the exact path (the fast path takes them first, so only a direct call reaches the branch): +0 or -0 by
 // the sign, whatever the digits and the exponent.
 template <typename R>
@@ -744,6 +780,8 @@ int main() {
 	test_first_byte<double>();
 	test_first_byte<float>();
 	test_int_range();
+	test_integer_ties<double>(rng);
+	test_integer_ties<float>(rng);
 	if (failures != 0) {
 		std::fprintf(stderr, "%ld failures\n", failures);
 		return 1;
