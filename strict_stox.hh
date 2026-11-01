@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <algorithm>          // for std::min
 #include <bit>                // for std::bit_cast, std::countl_zero, std::countr_zero
 #include <cfloat>             // for FLT_MIN, FLT_EVAL_METHOD
 #include <clocale>            // for std::localeconv
@@ -392,50 +393,6 @@ inline bool el_convert(std::uint64_t w, int q, typename fp_traits<R>::bits& out)
 	return true;
 }
 
-// More than 19 digits: w holds the first 19 significant digits and, when any later
-// digit is not zero, the exact value lies strictly between w and w + 1 (in units of
-// 10^q). Rounding is monotonic, so if both ends round to the same value, so does it.
-template <typename R>
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((noinline))
-#endif
-inline bool fp_long(const char* p, const char* const mend, std::ptrdiff_t q, typename fp_traits<R>::bits& out) noexcept {
-	std::uint64_t w = 0;
-	int nsig = 0;
-	bool sticky = false;
-	bool frac = false;
-	for (; p != mend; ++p) {
-		if (*p == '.') {
-			frac = true;
-			continue;
-		}
-		const unsigned d = static_cast<unsigned char>(*p) - '0';
-		if (nsig == 0 && d == 0) {  // leading zero: it only shifts the decimal point
-			if (frac) { --q; }
-		} else if (nsig < 19) {
-			w = w * 10 + d;
-			++nsig;
-			if (frac) { --q; }
-		} else {
-			sticky |= d != 0;
-			if (!frac) { ++q; }
-		}
-	}
-	if (w == 0) {
-		out = 0;
-		return true;
-	}
-	if (q < pow5_qmin || q > pow5_qmax) { return false; }
-	typename fp_traits<R>::bits a;
-	if (!el_convert<R>(w, static_cast<int>(q), a)) { return false; }
-	if (sticky) {
-		typename fp_traits<R>::bits b;
-		if (!el_convert<R>(w + 1, static_cast<int>(q), b) || a != b) { return false; }
-	}
-	out = a;
-	return true;
-}
-
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define STRICT_STOX_SWAR 1
 // Eight characters at once. Non-zero bits in a byte of the result mean that byte is not an ASCII digit.
@@ -486,6 +443,100 @@ inline const char* scan_digits(const char* p, const char* const e, std::uint64_t
 	return p;
 }
 
+// The digits of [p, e) are known to be digits ('0'..'9') in the helpers below.
+
+// The first character of [p, e) that is not '0' (e when there is none).
+inline const char* skip_zeros(const char* p, const char* const e) noexcept {
+#ifdef STRICT_STOX_SWAR
+	while (e - p >= 8) {
+		std::uint64_t v;
+		std::memcpy(&v, p, 8);
+		v ^= 0x3030303030303030ULL;
+		if (v != 0) { return p + (ctz64(v) >> 3); }
+		p += 8;
+	}
+#endif
+	while (p != e && *p == '0') { ++p; }
+	return p;
+}
+
+// True when a digit of [p, e) is not '0'.
+inline bool any_nonzero(const char* p, const char* const e) noexcept {
+#ifdef STRICT_STOX_SWAR
+	while (e - p >= 8) {
+		std::uint64_t v;
+		std::memcpy(&v, p, 8);
+		if (v != 0x3030303030303030ULL) { return true; }
+		p += 8;
+	}
+#endif
+	for (; p != e; ++p) {
+		if (*p != '0') { return true; }
+	}
+	return false;
+}
+
+// w * 10^n + the n digits at p (n <= 19, and w * 10^n < 2^64).
+inline std::uint64_t append_digits(const char* p, std::size_t n, std::uint64_t w) noexcept {
+#ifdef STRICT_STOX_SWAR
+	while (n >= 8) {
+		std::uint64_t v;
+		std::memcpy(&v, p, 8);
+		w = w * 100000000ULL + parse8(v);
+		p += 8;
+		n -= 8;
+	}
+#endif
+	while (n-- != 0) { w = w * 10 + static_cast<unsigned>(*p++ - '0'); }
+	return w;
+}
+
+// More than 19 digits: the integer digits [ib, ie) and the fraction digits [fb, fe) give w, the first
+// 19 significant digits, and, when any later digit is not zero, the exact value lies strictly between
+// w and w + 1 (in units of 10^q). Rounding is monotonic, so if both ends round to the same value, so
+// does the text. An all-zero mantissa is zero.
+template <typename R>
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+inline bool fp_long(const char* const ib, const char* const ie, const char* const fb, const char* const fe, std::ptrdiff_t q, typename fp_traits<R>::bits& out) noexcept {
+	std::uint64_t w;
+	bool sticky;
+	const char* const a = skip_zeros(ib, ie);
+	if (a != ie) {  // the first significant digit is an integer digit
+		const std::size_t ni = static_cast<std::size_t>(ie - a);
+		if (ni >= 19) {
+			w = append_digits(a, 19, 0);
+			q += static_cast<std::ptrdiff_t>(ni - 19);  // the integer digits not read are factors of 10
+			sticky = any_nonzero(a + 19, ie) || any_nonzero(fb, fe);
+		} else {
+			const std::size_t k = std::min<std::size_t>(19 - ni, static_cast<std::size_t>(fe - fb));
+			w = append_digits(fb, k, append_digits(a, ni, 0));
+			q -= static_cast<std::ptrdiff_t>(k);
+			sticky = any_nonzero(fb + k, fe);
+		}
+	} else {  // zeros, then the first significant digit in the fraction
+		const char* const b = skip_zeros(fb, fe);
+		if (b == fe) {
+			out = 0;
+			return true;
+		}
+		const std::size_t k = std::min<std::size_t>(19, static_cast<std::size_t>(fe - b));
+		w = append_digits(b, k, 0);
+		q -= static_cast<std::ptrdiff_t>(static_cast<std::size_t>(b - fb) + k);
+		sticky = any_nonzero(b + k, fe);
+	}
+	if (q < pow5_qmin || q > pow5_qmax) { return false; }
+	typename fp_traits<R>::bits x;
+	if (!el_convert<R>(w, static_cast<int>(q), x)) { return false; }
+	if (sticky) {
+		typename fp_traits<R>::bits y;
+		if (!el_convert<R>(w + 1, static_cast<int>(q), y) || x != y) { return false; }
+	}
+	out = x;
+	return true;
+}
+
 // strtod reads the decimal point of the current locale, so text with a '.' may be read here only
 // when the locale's decimal point is ".". The query is a libc call; nl_langinfo (POSIX) is a few
 // loads, localeconv fills a whole structure and costs two to three times as much. A program that
@@ -529,12 +580,14 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 	const char* const m0 = p;
 	std::uint64_t w = 0;
 	p = scan_digits(p, e, w);
+	const char* const ie = p;
+	const char* f0 = p;  // the fraction digits [f0, mend): none when there is no '.'
 	std::ptrdiff_t nd = p - m0;
 	std::ptrdiff_t nf = 0;
 	bool dot = false;
 	if (p != e && *p == '.') {
 		dot = true;
-		const char* const f0 = ++p;
+		f0 = ++p;
 		p = scan_digits(p, e, w);
 		nf = p - f0;
 		nd += nf;
@@ -561,7 +614,7 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 	}
 	bits_t b;
 	if (nd > 19) {
-		if (!fp_long<R>(m0, mend, ex, b)) { return false; }
+		if (!fp_long<R>(m0, ie, f0, mend, ex, b)) { return false; }
 	} else if (w == 0) {
 		b = 0;
 	} else {

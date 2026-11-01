@@ -340,6 +340,16 @@ static void midpoint_cases(std::uint64_t m, int e, std::mt19937_64& rng, Stats& 
 			v.emplace_back(dg.substr(0, cut) + "1", d.x10 + static_cast<long>(dg.size() - cut) - 1);
 		}
 	}
+	// The first 19 digits of the halfway point, then the next digit one higher and 0 to 23 zeros: just above the halfway
+	// point, and the only thing that says so is a non-zero digit at the start of a run of zeros, wherever it falls in the
+	// eight byte groups the digit scan reads.
+	for (int i = 0; i < 3; ++i) {
+		if (dg.size() > 20 && dg[19] != '9') {
+			const std::size_t zeros = rng() % 24;
+			std::string t = dg.substr(0, 19) + static_cast<char>(dg[19] + 1) + std::string(zeros, '0');
+			v.emplace_back(t, d.x10 + static_cast<long>(dg.size()) - static_cast<long>(t.size()));
+		}
+	}
 	for (auto& [digits, x10] : v) {
 		check_text(render(digits, x10, static_cast<int>(rng() % 3), (rng() & 1) != 0), sd, sf, api);
 	}
@@ -566,6 +576,35 @@ static void rounding_and_locale() {
 #endif
 }
 
+// More than 19 digits: in range, such text is taken by the fast path almost every time, with the point anywhere and any number of
+// leading zeros. Declining is always correct, so only a floor on the share taken notices a reader that gives up too soon
+// (a window of fewer than 19 significant digits, leading zeros counted as digits).
+static void long_acceptance(std::uint64_t seed) {
+	std::mt19937_64 rng(seed + 31);
+	const char* const names[3] = {"20-40 digits, point after 1-19", "0. zeros 20-40 digits", "20-30 digit integers"};
+	Stats sd[3], sf[3];
+	for (int i = 0; i < 20000; ++i) {  // not scaled by `slow`: the sample is the same on every platform, so the floor holds on all
+		for (int c = 0; c < 3; ++c) {
+			std::string t = (rng() % 4 == 0) ? "-" : "";
+			const int n = 20 + static_cast<int>(rng() % (c == 2 ? 11 : 21));
+			const int dot = 1 + static_cast<int>(rng() % 19);
+			if (c == 1) { t += "0." + std::string(rng() % 31, '0'); }
+			for (int k = 0; k < n; ++k) {
+				if (c == 0 && k == dot) { t += '.'; }
+				t += static_cast<char>('0' + (k == 0 && c != 1 ? 1 + rng() % 9 : rng() % 10));
+			}
+			check_fast<double>(t, sd[c], false);
+			check_fast<float>(t, sf[c], false);
+		}
+	}
+	for (int c = 0; c < 3; ++c) {
+		std::printf("  long text, %-30s double %.2f%% taken, float %.2f%% taken\n", names[c], 100.0 * sd[c].accepted / sd[c].checks, 100.0 * sf[c].accepted / sf[c].checks);
+		if (sd[c].accepted < sd[c].checks * 995 / 1000 || sf[c].accepted < sf[c].checks * 995 / 1000) {
+			FAIL("fast path takes too little of \"%s\": double %ld/%ld float %ld/%ld", names[c], sd[c].accepted, sd[c].checks, sf[c].accepted, sf[c].checks);
+		}
+	}
+}
+
 // --- Modes. ---
 static void quick(std::uint64_t seed) {
 	check_table();
@@ -597,6 +636,7 @@ static void quick(std::uint64_t seed) {
 	}
 	random_work(seed, 200000 / slow, sd, sf, true);
 	rounding_and_locale();
+	long_acceptance(seed);
 	std::printf("  double: %ld checks, %ld taken by the fast path (%.1f%%)\n", sd.checks, sd.accepted, 100.0 * sd.accepted / sd.checks);
 	std::printf("  float:  %ld checks, %ld taken by the fast path (%.1f%%)\n", sf.checks, sf.accepted, 100.0 * sf.accepted / sf.checks);
 	// The plain formats must really use it: a regression that declines everything would still be "correct".

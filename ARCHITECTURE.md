@@ -96,7 +96,11 @@ the digit count. Then, in order:
 3. **More than 19 digits.** The first 19 significant digits give `w`; if any later
    digit is not zero the exact value is strictly between `w` and `w + 1` (in units
    of `10^q`). Rounding is monotonic, so when `w` and `w + 1` convert to the same
-   value, so does the text. Otherwise the call is declined.
+   value, so does the text. Otherwise the call is declined. The integer and fraction
+   runs the scan found are not read again digit by digit: leading zeros are skipped,
+   the 19 digits are taken with eight-byte loads, and the rest of each run is tested for
+   a non-zero digit eight bytes at a time (800 digits cost about the same as for
+   `fast_float`).
 
 The conversions round to nearest. `strtod` follows the current rounding mode, so the
 fast path is skipped when it is not to nearest (`rounds_to_nearest`, a volatile
@@ -114,7 +118,7 @@ cases, the exact halfway point of every binade, and random text in many formats
 against libc and `std::from_chars`. `test/rounding_test.cc` runs the public API in each of
 the four rounding modes against libc, and `test/locale_test.cc` tests the decimal point guard
 with a mock decimal point (`STRICT_STOX_DECIMAL_POINT`, a seam for tests) and, where one is
-installed, a real comma locale. `tools/fp_mutants.py` breaks the implementation in 37
+installed, a real comma locale. `tools/fp_mutants.py` breaks the implementation in 50
 deliberate ways and requires each to fail the tests; the rounding and locale mutants must
 fail their own test.
 

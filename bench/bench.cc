@@ -67,10 +67,10 @@ static double run(const Pool& v, P parse) {
 }
 
 static void header() {
-	std::printf("%-34s %8s %8s %8s %8s %8s %8s %8s\n", "workload (ns/element)", "old", "before", "new", "new A/A", "from_chars", "fastfloat", "absl");
+	std::printf("%-34s %8s %8s %8s %8s %8s %8s %8s %6s\n", "workload (ns/element)", "old", "before", "new", "new A/A", "from_chars", "fastfloat", "absl", "fast%");
 }
 
-static void row(const char* name, double o, double pv, double n, double n2, double fc, double ff, double ab) {
+static void row(const char* name, double o, double pv, double n, double n2, double fc, double ff, double ab, double taken = -1) {
 	auto cell = [](double v) { if (v > 0) { std::printf(" %8.1f", v); } else { std::printf(" %8s", "-"); } };
 	std::printf("%-34s", name);
 	cell(o);
@@ -80,7 +80,19 @@ static void row(const char* name, double o, double pv, double n, double n2, doub
 	cell(fc);
 	cell(ff);
 	cell(ab);
+	if (taken >= 0) { std::printf(" %5.0f%%", 100.0 * taken); }
 	std::printf("\n");
+}
+
+// The share of the pool the fast path takes: a row whose inputs mostly go to strtod measures strtod.
+template <typename R>
+static double taken_share(const Pool& v) {
+	std::size_t n = 0;
+	for (auto& s : v) {
+		R x;
+		if (strict_stox_detail::fast_fp<R>(x, s)) { ++n; }
+	}
+	return static_cast<double>(n) / static_cast<double>(v.size());
 }
 
 static void int_rows(std::mt19937_64& rng) {
@@ -150,7 +162,7 @@ static void fp_row(const char* name, const Pool& v) {
 	if constexpr (std::is_same_v<R, double>) { ab = run<double>(v, [&](const std::string& s) { double x = 0; absl::SimpleAtod(s, &x); return x; }); }
 	else { ab = run<double>(v, [&](const std::string& s) { float x = 0; absl::SimpleAtof(s, &x); return static_cast<double>(x); }); }
 #endif
-	row(name, o, pv, n, n2, fc, ff, ab);
+	row(name, o, pv, n, n2, fc, ff, ab, taken_share<R>(v));
 }
 
 int main(int argc, char** argv) {

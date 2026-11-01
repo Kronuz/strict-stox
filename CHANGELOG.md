@@ -87,7 +87,7 @@ release tags yet, so entries are dated.
     whatever the decimal point is. Where a comma locale is installed (`de_DE`, `fr_FR`, or the
     one in `STRICT_STOX_TEST_LOCALE`), `strict_stox_locale` also checks the global locale
     and a thread's own locale (`uselocale`) against libc.
-  - `tools/fp_mutants.py` has three more mutants (37) and builds each against
+  - `tools/fp_mutants.py` has three more mutants and builds each against
     the three tests; the rounding and locale mutants must be killed by their own test.
     Before, deleting the locale check passed every test on a machine with no comma
     locale.
@@ -99,6 +99,33 @@ release tags yet, so entries are dated.
 
 ### Fixed
 
+- **Text of more than 19 digits was no faster than `strtod`.** After the digit scan, the
+  conversion of 199e0be read the mantissa again byte by byte (four branches per digit), so
+  25 to 40 digit text took 55 ns against 45 for the previous `strtod` path, and 800
+  digits 1.36 us. The first 19 significant digits are now taken with eight-byte loads
+  from the integer and fraction runs the scan has already delimited, leading zeros are skipped
+  eight at a time, and the rest of each run is tested for a non-zero digit eight bytes
+  at a time. Results are unchanged: for every text of the tests below, the new and the
+  old `fast_fp` take or decline the text alike and return the same bits.
+
+  Apple M4 Pro, Apple clang 17 `-O3`, `quiet strict`, ns per element, same process
+  (best of 9; each cell is the mean of two runs that differ by at most 3%; the other rows,
+  17 digits and shorter, differ from 199e0be by less than the A/A spread of about 5%):
+
+  | workload | 199e0be | now | `fast_float` |
+  |---|---|---|---|
+  | `stod`, 25-40 digits | 55.2 | 18.7 | 30.1 |
+  | `stod`, 100 digits | 173.3 | 26.7 | 38.9 |
+  | `stod`, 800 digits | 1,357 | 131 | 135 |
+  | `stof`, 25-40 digits | 59.4 | 22.2 | 29.6 |
+
+  Verification: `tools/fp_mutants.py` has 50 mutants (17 for this path); three of them
+  survived the existing tests and are now killed by two additions to `test/fp_test.cc`: a
+  halfway point cut after 19 digits followed by the next digit and 0 to 23 zeros (a value just
+  above the tie that only a non-zero digit at the start of an eight-byte group of zeros
+  reveals), and a floor of 99.5% on the share of in-range 20 to 40 digit text that the fast
+  path takes (a reader with a window of 18 digits, or that counts leading zeros as
+  digits, declines more, which no correctness test can see; the share is 99.7% to 100%).
 - **Input of any length parses.** The wrapper copied the text into a 64-byte
   buffer, and a later check treated the cut as trailing junk. Valid input of 64
   bytes or more (100 leading zeros, long whitespace, a long decimal string) was

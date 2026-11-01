@@ -43,14 +43,26 @@ MUTANTS = {
     "log2_const": ("int be = ((q * 217706) >> 16)", "int be = ((q * 217690) >> 16)"),
     # carry ignored
     "no_carry": ("const int carry = static_cast<int>(m >> (tr::mant + 1));", "const int carry = 0;"),
-    # sticky digits ignored
-    "sticky_ignored": ("sticky |= d != 0;", "sticky |= false;"),
-    # w + 1 comparison skipped
-    "sticky_no_upper": ("if (!el_convert<R>(w + 1, static_cast<int>(q), b) || a != b) { return false; }", "(void)b;"),
-    # leading zero in the fraction does not shift the decimal point (long path)
-    "long_leading_zero": ("if (nsig == 0 && d == 0) {  // leading zero: it only shifts the decimal point\n\t\t\tif (frac) { --q; }", "if (nsig == 0 && d == 0) {  // leading zero: it only shifts the decimal point\n\t\t\tif (false) { --q; }"),
-    # dropped integer digits do not raise the exponent
-    "long_dropped_int": ("if (!frac) { ++q; }", "if (false) { ++q; }"),
+    # the long path (more than 19 digits): sticky digits ignored in each place they can be, and w + 1 not compared
+    "sticky_after_int19": ("sticky = any_nonzero(a + 19, ie) || any_nonzero(fb, fe);", "sticky = any_nonzero(fb, fe);"),
+    "sticky_frac_of_int19": ("sticky = any_nonzero(a + 19, ie) || any_nonzero(fb, fe);", "sticky = any_nonzero(a + 19, ie);"),
+    "sticky_after_int": ("sticky = any_nonzero(fb + k, fe);", "sticky = false;"),
+    "sticky_after_zeros": ("sticky = any_nonzero(b + k, fe);", "sticky = false;"),
+    "sticky_no_upper": ("if (!el_convert<R>(w + 1, static_cast<int>(q), y) || x != y) { return false; }", "(void)y;"),
+    # leading zeros of the fraction do not shift the decimal point; dropped integer digits do not raise the exponent
+    "long_leading_zero": ("q -= static_cast<std::ptrdiff_t>(static_cast<std::size_t>(b - fb) + k);", "q -= static_cast<std::ptrdiff_t>(k);"),
+    "long_dropped_int": ("q += static_cast<std::ptrdiff_t>(ni - 19);", ""),
+    "long_frac_digits": ("q -= static_cast<std::ptrdiff_t>(k);\n\t\t\tsticky = any_nonzero(fb + k, fe);", "sticky = any_nonzero(fb + k, fe);"),
+    "long_window_20": ("w = append_digits(a, 19, 0);", "w = append_digits(a, 20, 0);"),
+    "long_window_18": ("const std::size_t k = std::min<std::size_t>(19, static_cast<std::size_t>(fe - b));", "const std::size_t k = std::min<std::size_t>(18, static_cast<std::size_t>(fe - b));"),
+    "long_window_int": ("const std::size_t k = std::min<std::size_t>(19 - ni, static_cast<std::size_t>(fe - fb));", "const std::size_t k = std::min<std::size_t>(20 - ni, static_cast<std::size_t>(fe - fb));"),
+    "long_all_zero": ("if (b == fe) {\n\t\t\tout = 0;", "if (b == fe) {\n\t\t\tout = 1;"),
+    "long_fraction_start": ("fp_long<R>(m0, ie, f0, mend, ex, b)", "fp_long<R>(m0, ie, ie, mend, ex, b)"),
+    # the digit helpers: the zero scan, the non-zero scan and the digit accumulation
+    "skip_zeros_shift": ("return p + (ctz64(v) >> 3);", "return p + (ctz64(v) >> 4);"),
+    "any_nonzero_first_byte": ("if (v != 0x3030303030303030ULL) { return true; }", "if ((v >> 8) != 0x0030303030303030ULL) { return true; }"),
+    "append_tail": ("while (n-- != 0) { w = w * 10 + static_cast<unsigned>(*p++ - '0'); }", "while (n-- > 1) { w = w * 10 + static_cast<unsigned>(*p++ - '0'); }"),
+    "append_chunk": ("w = w * 100000000ULL + parse8(v);\n\t\tp += 8;\n\t\tn -= 8;", "w = w * 10000000ULL + parse8(v);\n\t\tp += 8;\n\t\tn -= 8;"),
     # table corruption: one entry off by one
     "table_entry": ("0xcccccccccccccccdULL", "0xccccccccccccccccULL") if "0xcccccccccccccccdULL" in src else ("0xccccccccccccccccULL", "0xccccccccccccccbbULL"),
     # swapped normalisation of negative exponents
