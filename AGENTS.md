@@ -26,7 +26,7 @@ tools/verify_mutants.py      Builds verify.cc against each mutant of fp_mutants.
 .github/workflows/verify.yml The sweeps on four platforms and the mutation check on three shards, started by hand (workflow_dispatch).
 docs/perf/README.md          The bench/bench.cc tables on the M4 Pro and the i9.
 docs/perf/verification.md    What has run through verify.cc and fp_mutants.py, on which platforms, with the libc defects found.
-bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH); rows for declined and error input and for the exact path.
+bench/bench.cc               Benchmark vs the frozen header, libc strto*, std::from_chars, fast_float (fetched at a pinned tag) and abseil when installed (STRICT_STOX_BUILD_BENCH); rows for declined and error input and for the exact path. `--check` compares results without timing (CTest `strict_stox_bench_check`).
 CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_slow`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                 Behavior and performance changes, dated.

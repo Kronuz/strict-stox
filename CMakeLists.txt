@@ -118,9 +118,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_test(NAME strict_stox_verify_syntax COMMAND strict_stox_verify syntax -n 4 -t 2)
   endif()
 
-  # Benchmark (not run by ctest). Comparators (std::from_chars, optionally
-  # abseil and fast_float when installed) are only linked by this target.
-  # fast_float: -DSTRICT_STOX_FAST_FLOAT_DIR=<dir containing fast_float/fast_float.h>
+  # Benchmark (not run by ctest). Comparators (libc strto*, std::from_chars, fast_float, and
+  # abseil when installed) are only linked by this target. fast_float is fetched at the tag
+  # below unless -DSTRICT_STOX_FAST_FLOAT_DIR=<dir containing fast_float/fast_float.h> names one.
   option(STRICT_STOX_BUILD_BENCH "Build bench/bench.cc" OFF)
   if(STRICT_STOX_BUILD_BENCH)
     add_executable(strict_stox_bench bench/bench.cc)
@@ -131,11 +131,33 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
       target_compile_definitions(strict_stox_bench PRIVATE HAVE_ABSL=1)
       target_link_libraries(strict_stox_bench PRIVATE absl::strings)
     endif()
-    find_path(STRICT_STOX_FAST_FLOAT_DIR fast_float/fast_float.h)
-    if(STRICT_STOX_FAST_FLOAT_DIR)
-      target_compile_definitions(strict_stox_bench PRIVATE HAVE_FAST_FLOAT=1)
-      target_include_directories(strict_stox_bench PRIVATE "${STRICT_STOX_FAST_FLOAT_DIR}")
+    set(STRICT_STOX_FAST_FLOAT_DIR "" CACHE PATH "include directory holding fast_float/fast_float.h (fetched when empty)")
+    if(STRICT_STOX_FAST_FLOAT_DIR STREQUAL "")
+      include(FetchContent)
+      FetchContent_Declare(
+        fast_float
+        GIT_REPOSITORY https://github.com/fastfloat/fast_float.git
+        GIT_TAG        v8.3.3
+        GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  none  # header-only: populate, do not add its tests
+      )
+      FetchContent_MakeAvailable(fast_float)
+      set(STRICT_STOX_FAST_FLOAT_DIR "${fast_float_SOURCE_DIR}/include")
     endif()
+    target_compile_definitions(strict_stox_bench PRIVATE HAVE_FAST_FLOAT=1)
+    target_include_directories(strict_stox_bench PRIVATE "${STRICT_STOX_FAST_FLOAT_DIR}")
+    # Floating-point std::from_chars needs a newer standard library than some platforms ship (libc++
+    # before macOS 26 marks it unavailable); the column is dropped where it does not compile.
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_FLAGS "-std=c++20")
+    check_cxx_source_compiles("#include <charconv>
+      int main() { double d = 0; const char* s = \"1\"; std::from_chars(s, s + 1, d); }" STRICT_STOX_HAVE_FP_FROM_CHARS)
+    unset(CMAKE_REQUIRED_FLAGS)
+    if(NOT STRICT_STOX_HAVE_FP_FROM_CHARS)
+      target_compile_definitions(strict_stox_bench PRIVATE STRICT_STOX_BENCH_NO_FC=1)
+    endif()
+    # Results only, no timing: libc strto* must read every input the same as strict-stox.
+    add_test(NAME strict_stox_bench_check COMMAND strict_stox_bench --check)
   endif()
 
   # A runnable tour of the library (not a test): build & run ./build/strict_stox_demo

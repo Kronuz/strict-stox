@@ -5,7 +5,14 @@
 // available, fast_float (-DHAVE_FAST_FLOAT with its include path) and
 // absl::SimpleAtoi/SimpleAtod (HAVE_ABSL). from_chars, fast_float and abseil
 // accept a narrower syntax or ignore the locale and errno, so they are speed
-// references, not equivalents.
+// references, not equivalents; "libc" is strtol/strtoull/strtod/strtof on a NUL-terminated copy,
+// which is what strict-stox falls back to. The last columns count, out of the 1024 inputs of the
+// pool, the inputs strict-stox reports an error on ("err": ERANGE or EINVAL, where it returns 0)
+// and, among the others, the inputs whose value a comparator reads differently (from_chars /
+// fast_float / libc), compared bit for bit: 0 means it returns the same result on every input of
+// the row. `strict_stox_bench --check` runs these comparisons without timing and exits 1 when libc
+// differs anywhere; from_chars and fast_float differ legitimately on text outside their syntax
+// (leading white space).
 // Build with -DSTRICT_STOX_BUILD_BENCH=ON. Best of 9 samples, ns per element over a
 // pool of 1024 inputs; "new A/A" repeats the new measurement in the same process,
 // and the percentage is its distance from the first one (the noise floor).
@@ -14,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <random>
 #include <string>
@@ -56,9 +64,12 @@ static double best_ns(F&& f, size_t per_call) {
 
 static volatile double sink;
 using Pool = std::vector<std::string>;
+static bool g_check = false;
+static std::size_t g_libc_differs = 0;
 
 template <typename T, typename P>
 static double run(const Pool& v, P parse) {
+	if (g_check) { return 0; }
 	return best_ns([&] {
 		T a = 0;
 		for (auto& s : v) { a += parse(s); }
@@ -67,21 +78,42 @@ static double run(const Pool& v, P parse) {
 }
 
 static void header() {
-	std::printf("%-34s %8s %8s %8s %8s %8s %8s %8s %6s\n", "workload (ns/element)", "old", "before", "new", "new A/A", "from_chars", "fastfloat", "absl", "fast%");
+	std::printf("%-34s %8s %8s %8s %8s %8s %8s %8s %8s %6s  %s\n", "workload (ns/element)", "old", "before", "new", "new A/A", "from_chars", "fastfloat", "absl", "libc", "fast%", "differs fc/ff/libc  err");
 }
 
-static void row(const char* name, double o, double pv, double n, double n2, double fc, double ff, double ab, double taken = -1) {
+// The inputs of the pool a comparator reads differently from strict-stox: the same bits, so NaN equals NaN.
+// An input strict-stox reports an error on (`err` set, a value of 0) is counted in `errors` and not compared.
+struct Differs { std::size_t fc = 0, ff = 0, libc = 0, errors = 0; };
+
+template <typename T, typename A, typename B>
+static std::size_t differs(const Pool& v, const int& err, A ours, B theirs, std::size_t* errors = nullptr) {
+	std::size_t n = 0;
+	for (auto& s : v) {
+		const T a = ours(s);
+		if (err != 0) {
+			if (errors) { ++*errors; }
+			continue;
+		}
+		const T b = theirs(s);
+		if (std::memcmp(&a, &b, sizeof a) != 0) { ++n; }
+	}
+	return n;
+}
+
+static void row(const char* name, double o, double pv, double n, double n2, double fc, double ff, double ab, double lc, double taken = -1, Differs d = {}) {
 	auto cell = [](double v) { if (v > 0) { std::printf(" %8.1f", v); } else { std::printf(" %8s", "-"); } };
 	std::printf("%-34s", name);
 	cell(o);
 	cell(pv);
 	cell(n);
-	std::printf(" %+7.1f%%", 100.0 * (n2 - n) / n);
+	std::printf(" %+7.1f%%", n > 0 ? 100.0 * (n2 - n) / n : 0.0);
 	cell(fc);
 	cell(ff);
 	cell(ab);
-	if (taken >= 0) { std::printf(" %5.0f%%", 100.0 * taken); }
-	std::printf("\n");
+	cell(lc);
+	if (taken >= 0) { std::printf(" %5.0f%%", 100.0 * taken); } else { std::printf(" %6s", ""); }
+	std::printf("  %zu/%zu/%zu  %zu\n", d.fc, d.ff, d.libc, d.errors);
+	g_libc_differs += d.libc;
 }
 
 // The share of the pool the fast path takes: a row whose inputs mostly go to strtod measures strtod.
@@ -108,12 +140,16 @@ static void int_rows(std::mt19937_64& rng) {
 		}
 		int e;
 		const int base = k.kind == 2 ? 16 : 10;
-		double o, n, n2, fc, ab = 0;
+		double o, n, n2, fc, ab = 0, lc;
+		Differs d;
 		if (k.kind == 0) {
 			o = run<long>(v, [&](const std::string& s) { return static_cast<long>(old::strict_stoi(&e, s)); });
 			n = run<long>(v, [&](const std::string& s) { return static_cast<long>(strict_stoi(&e, s)); });
 			n2 = run<long>(v, [&](const std::string& s) { return static_cast<long>(strict_stoi(&e, s)); });
 			fc = run<long>(v, [&](const std::string& s) { int x = 0; std::from_chars(s.data(), s.data() + s.size(), x); return static_cast<long>(x); });
+			lc = run<long>(v, [&](const std::string& s) { return std::strtol(s.c_str(), nullptr, 10); });
+			d.fc = differs<long>(v, e, [&](const std::string& s) { return static_cast<long>(strict_stoi(&e, s)); }, [&](const std::string& s) { int x = 0; std::from_chars(s.data(), s.data() + s.size(), x); return static_cast<long>(x); });
+			d.libc = differs<long>(v, e, [&](const std::string& s) { return static_cast<long>(strict_stoi(&e, s)); }, [&](const std::string& s) { return static_cast<long>(static_cast<int>(std::strtol(s.c_str(), nullptr, 10))); }, &d.errors);
 #ifdef HAVE_ABSL
 			ab = run<long>(v, [&](const std::string& s) { int x = 0; absl::SimpleAtoi(s, &x); return static_cast<long>(x); });
 #endif
@@ -122,8 +158,11 @@ static void int_rows(std::mt19937_64& rng) {
 			n = run<unsigned long long>(v, [&](const std::string& s) { return strict_stoull(&e, s, nullptr, base); });
 			n2 = run<unsigned long long>(v, [&](const std::string& s) { return strict_stoull(&e, s, nullptr, base); });
 			fc = run<unsigned long long>(v, [&](const std::string& s) { unsigned long long x = 0; std::from_chars(s.data(), s.data() + s.size(), x, base); return x; });
+			lc = run<unsigned long long>(v, [&](const std::string& s) { return std::strtoull(s.c_str(), nullptr, base); });
+			d.fc = differs<unsigned long long>(v, e, [&](const std::string& s) { return strict_stoull(&e, s, nullptr, base); }, [&](const std::string& s) { unsigned long long x = 0; std::from_chars(s.data(), s.data() + s.size(), x, base); return x; });
+			d.libc = differs<unsigned long long>(v, e, [&](const std::string& s) { return strict_stoull(&e, s, nullptr, base); }, [&](const std::string& s) { return static_cast<unsigned long long>(std::strtoull(s.c_str(), nullptr, base)); }, &d.errors);
 		}
-		row(k.name, o, 0, n, n2, fc, 0, ab);
+		row(k.name, o, 0, n, n2, fc, 0, ab, lc, -1, d);
 	}
 }
 
@@ -151,7 +190,8 @@ static void int_edge_rows(std::mt19937_64& rng) {
 		const double o = run<long long>(v, [&](const std::string& s) { return old::strict_stoll(&e, s, nullptr, base); });
 		const double n = run<long long>(v, [&](const std::string& s) { return strict_stoll(&e, s, nullptr, base); });
 		const double n2 = run<long long>(v, [&](const std::string& s) { return strict_stoll(&e, s, nullptr, base); });
-		row(k.name, o, 0, n, n2, 0, 0, 0);
+		const double lc = run<long long>(v, [&](const std::string& s) { return std::strtoll(s.c_str(), nullptr, base); });
+		row(k.name, o, 0, n, n2, 0, 0, 0, lc);
 	}
 }
 
@@ -164,7 +204,12 @@ static std::string to_s(double d, const char* f) {
 template <typename R>
 static void fp_row(const char* name, const Pool& v) {
 	int e;
-	double o, pv = 0, n, n2, fc = 0, ff = 0, ab = 0;
+	double o, pv = 0, n, n2, fc = 0, ff = 0, ab = 0, lc;
+	Differs d;
+	const auto ours = [&](const std::string& s) { return static_cast<R>(std::is_same_v<R, double> ? strict_stod(&e, s) : static_cast<double>(strict_stof(&e, s))); };
+	const auto libc_read = [](const std::string& s) { if constexpr (std::is_same_v<R, double>) { return std::strtod(s.c_str(), nullptr); } else { return std::strtof(s.c_str(), nullptr); } };
+	lc = run<double>(v, [&](const std::string& s) { return static_cast<double>(libc_read(s)); });
+	d.libc = differs<R>(v, e, ours, libc_read, &d.errors);
 	if constexpr (std::is_same_v<R, double>) {
 		o = run<double>(v, [&](const std::string& s) { return old::strict_stod(&e, s); });
 #ifdef HAVE_PREV
@@ -182,20 +227,26 @@ static void fp_row(const char* name, const Pool& v) {
 	}
 #ifndef STRICT_STOX_BENCH_NO_FC
 	fc = run<double>(v, [&](const std::string& s) { R x = 0; std::from_chars(s.data(), s.data() + s.size(), x); return static_cast<double>(x); });
+	d.fc = differs<R>(v, e, ours, [&](const std::string& s) { R x = 0; std::from_chars(s.data(), s.data() + s.size(), x); return x; });
 #endif
 #ifdef HAVE_FAST_FLOAT
 	ff = run<double>(v, [&](const std::string& s) { R x = 0; fast_float::from_chars(s.data(), s.data() + s.size(), x); return static_cast<double>(x); });
+	d.ff = differs<R>(v, e, ours, [&](const std::string& s) { R x = 0; fast_float::from_chars(s.data(), s.data() + s.size(), x); return x; });
 #endif
 #ifdef HAVE_ABSL
 	if constexpr (std::is_same_v<R, double>) { ab = run<double>(v, [&](const std::string& s) { double x = 0; absl::SimpleAtod(s, &x); return x; }); }
 	else { ab = run<double>(v, [&](const std::string& s) { float x = 0; absl::SimpleAtof(s, &x); return static_cast<double>(x); }); }
 #endif
-	row(name, o, pv, n, n2, fc, ff, ab, taken_share<R>(v));
+	row(name, o, pv, n, n2, fc, ff, ab, lc, taken_share<R>(v), d);
 }
 
 int main(int argc, char** argv) {
 	std::mt19937_64 rng(5);
-	const bool ints = argc < 2 || std::strcmp(argv[1], "fp") != 0;
+	bool ints = true;
+	for (int i = 1; i < argc; ++i) {
+		if (std::strcmp(argv[i], "fp") == 0) { ints = false; }
+		else if (std::strcmp(argv[i], "--check") == 0) { g_check = true; }
+	}
 	header();
 	if (ints) {
 		int_rows(rng);
@@ -250,5 +301,9 @@ int main(int argc, char** argv) {
 	fp_row<float>("stof odd integers 2^24..2^25 (ties)", fill([&] { return std::to_string((1ULL << 24) + 2 * (rng() % (1ULL << 23)) + 1); }));
 	fp_row<float>("stof subnormal (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e-" + std::to_string(40 + rng() % 5); }));
 	fp_row<float>("stof overflow (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e" + std::to_string(39 + rng() % 7); }));
+	if (g_check) {
+		std::printf("libc reads %zu inputs differently from strict-stox\n", g_libc_differs);
+		return g_libc_differs != 0 ? 1 : 0;
+	}
 	return 0;
 }
