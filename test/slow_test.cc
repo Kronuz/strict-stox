@@ -48,6 +48,7 @@
 namespace D = strict_stox_detail;
 
 static long failures = 0;
+static long libc_bugs = 0;  // texts on which libc is demonstrably wrong (see check_want)
 #define FAIL(...)                              \
 	do {                                       \
 		if (++failures <= 40) {                \
@@ -202,10 +203,15 @@ static void check_want(const std::string& text, const Want& w, const char* what,
 			if (!((a.r.err == 0 && a.r.bits == want_bits) || (a.r.err == ERANGE && a.r.bits == 0))) { FAIL("%s %s: got bits %llx errno %d, want bits %llx", what, clip(text).c_str(), (unsigned long long)a.r.bits, a.r.err, (unsigned long long)want_bits); }
 			break;
 	}
-	// Whatever libc is reached or not, the answer is libc's (where libc survives the text).
+	// Whatever libc is reached or not, the answer is libc's (where libc survives the text), unless libc is wrong: FreeBSD's strtof
+	// returns the smallest normal value (and no errno) for some texts of subnormal size, which the construction above has right.
 	if (libc_safe(text)) {
 		const oracle::Result lc = oracle::libc_result<R>(text, false);
-		if (!oracle::same(a.r, lc, false)) {
+		const std::uint64_t hidden = 1ULL << D::fp_traits<R>::mant;
+		const std::uint64_t mag = lc.bits & ~(1ULL << (sizeof(R) * 8 - 1));
+		if (w.kind == 'E' && lc.err == 0 && mag >= hidden) {
+			++libc_bugs;
+		} else if (!oracle::same(a.r, lc, false)) {
 			FAIL("%s %s: differs from libc: api bits %llx errno %d, libc bits %llx errno %d (reached libc: %d); the text: %s", what, clip(text).c_str(), (unsigned long long)a.r.bits, a.r.err, (unsigned long long)lc.bits,
 				lc.err, (int)a.libc, text.size() <= 400 ? text.c_str() : "(long)");
 		}
@@ -472,7 +478,15 @@ static void test_random(std::mt19937_64& rng, int count) {
 		if (sx != sy || (sx == 1 && !bits_equal(x, y))) { FAIL("fp_slow variants differ on %s: %d %d", clip(t).c_str(), sx, sy); }
 		const Api a = api<R>(t);
 		const bool safe = libc_safe(t);
-		if (safe && !oracle::same(a.r, oracle::libc_result<R>(t, false), false)) { FAIL("%s differs from libc: %s", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str()); }
+		if (safe) {
+			const oracle::Result lc = oracle::libc_result<R>(t, false);
+			const std::uint64_t lmag = lc.bits & ~(1ULL << (sizeof(R) * 8 - 1));
+			if (sx == 2 && lc.err == 0 && lmag >= hidden) {  // libc wrong (FreeBSD's strtof): the exact answer stands
+				++libc_bugs;
+			} else if (!oracle::same(a.r, lc, false)) {
+				FAIL("%s differs from libc: %s", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str());
+			}
+		}
 		if (a.libc) {
 			++reached;
 			// libc is reached only for a subnormal or smallest normal result (and then fp_slow declined)
@@ -622,6 +636,7 @@ int main() {
 		std::fprintf(stderr, "%ld failures\n", failures);
 		return 1;
 	}
+	if (libc_bugs != 0) { std::printf("NOTE: libc returned a normal value for %ld text(s) of subnormal size (a libc bug); they were checked against exact arithmetic\n", libc_bugs); }
 	std::printf("all slow path tests passed\n");
 	return 0;
 }
