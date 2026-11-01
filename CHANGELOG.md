@@ -185,8 +185,8 @@ release tags yet, so entries are dated.
   follows the locale). It is off by default so behavior does not change.
 - `bench/bench.cc` has rows for `fast_float`, a "before" column (`-DHAVE_PREV`), `float`
   rows, 17 digit and JSON-like rows, 25 to 800 digit rows and an A/A column.
-- **Tests for the rounding mode and the decimal point guard** (the audit of 2026-10-31
-  found both untested or covered by one case):
+- **Tests for the rounding mode and the decimal point guard** (both were untested or
+  covered by one case):
   - `test/rounding_test.cc` (`strict_stox_rounding`) runs `strict_stod` / `strict_stof`
     in each of the four rounding modes against libc (value bits, `errno`, `idx`, with and
     without `idx`; 15,524 texts per mode, negative and positive, 17 digit, 9 digit,

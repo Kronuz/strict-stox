@@ -24,6 +24,7 @@ tools/verify.cc              Independent sweep of stod/stof against libc, std::f
 tools/verify_chain.sh        The commands of verify.cc in sequence, one log each, at nice 19.
 tools/verify_mutants.py      Builds verify.cc against each mutant of fp_mutants.py and requires it to fail (except the decline-more and locale mutants, which only the repo's tests kill).
 .github/workflows/verify.yml The sweeps on four platforms and the mutation check on three shards, started by hand (workflow_dispatch).
+docs/perf/README.md          The bench/bench.cc tables on the M4 Pro and the i9.
 docs/perf/verification.md    What has run through verify.cc and fp_mutants.py, on which platforms, with the libc defects found.
 bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH); rows for declined and error input and for the exact path.
 CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_slow`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.

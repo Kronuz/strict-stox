@@ -7,221 +7,170 @@ Part of [Kronuz C++ Libraries](https://github.com/Kronuz/cpp-libraries), a colle
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
 ![Header-only](https://img.shields.io/badge/header--only-yes-green.svg)
 
-Strict number parsing for C++20: `strict_stoi("42abc")` is an error, not `42`.
-The whole string must be a number unless you ask for a prefix, overflow is an
-error, and a no-throw form reports through `errno`. For configuration, query
-strings, and anything users type.
-
-![strict-stox: the demo's output](docs/strict-stox.svg)
+Strict whole-string number parsing for C++20: trailing text and overflow are errors, in a throwing or an errno form.
+`strict_stoi("42abc")` is an error, not `42`. Plain integers and decimals are
+parsed by the header itself, with no copy and no `errno` traffic, and every
+`double` and `float` comes out bit for bit what libc's `strtod` and `strtof`
+return. Reach for it to read configuration, query strings, command lines and
+anything else people type.
 
 ## ✨ Highlights
 
-- **Strict by default.** Trailing garbage throws `std::invalid_argument`;
-  overflow throws `std::out_of_range`.
+- **Strict by default.** Trailing text throws `std::invalid_argument`; overflow
+  throws `std::out_of_range`.
 - **Prefixes on request.** Pass `idx` to parse a prefix and learn where it ended.
-- **No-throw form.** `strict_stoi(&err, "nope")` sets `err` to `EINVAL` or `ERANGE`.
-- **The whole family**: `strict_stoi`, `stou`, `stol`, `stoul`, `stoll`,
-  `stoull`, `stoz` (to `size_t`), `stof`, `stod`, `stold`, taking
-  `std::string_view`, with a base for the integer ones.
+- **No-throw form.** `strict_stoi(&err, "nope")` returns 0 and sets `err` to
+  `EINVAL` or `ERANGE`.
+- **The whole family.** `strict_stoi`, `stou`, `stol`, `stoul`, `stoll`, `stoull`,
+  `stoz` (to `size_t`), `stof`, `stod` and `stold`, taking a `std::string_view`,
+  with a base for the integer ones.
+- **Its own decimal parser.** Floats go through a table of powers of five, and
+  what the table cannot decide through an exact big-integer comparison with the
+  halfway point. libc's `strto*` decides the rest: trailing text, white space,
+  `+`, base prefixes, integer overflow, `inf`, `nan`, hex floats, `stold`, a
+  directed rounding mode, a locale whose decimal point is not `.`, and two
+  subnormal results whose `errno` differs between libcs.
+- **Checked against libc.** `ctest` compares both paths with libc and with the
+  frozen previous header, and the floating point path also with
+  `std::from_chars` and in all four rounding modes;
+  `tools/verify.cc` sweeps billions of texts
+  ([docs/perf/verification.md](docs/perf/verification.md)).
 - **One header, no dependencies.**
-
-## 📦 Installation
-
-Requires a C++20 compiler; CMake 3.14 or newer for the CMake route. CI builds it
-on Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan, UBSan,
-and TSan builds.
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(strict_stox
-  GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git
-  GIT_TAG        main)
-FetchContent_MakeAvailable(strict_stox)
-
-target_link_libraries(my_app PRIVATE strict_stox::strict_stox)
-```
-
-Or copy `strict_stox.hh` onto your include path.
 
 ## 🚀 Quick start
 
 ```cpp
 #include "strict_stox.hh"
 
+#include <cerrno>
 #include <cstdio>
+#include <stdexcept>
 
 int main() {
-	int port = strict_stoi("8080");                  // 8080
-	unsigned long mask = strict_stoul("1f", nullptr, 16);   // 31
+	int port = strict_stoi("8080");                        // 8080
+	unsigned long mask = strict_stoul("1f", nullptr, 16);  // 31
+	double ratio = strict_stod("0.25");                    // 0.25
+
+	std::size_t idx = 0;
+	long width = strict_stol("42px", &idx);                // 42 and idx == 2: a prefix, on request
 
 	int err = 0;
-	strict_stoi(&err, "8080/tcp");                   // err == EINVAL: not a whole number
-	std::printf("%d %lu %d\n", port, mask, err);
+	strict_stoi(&err, "8080/tcp");                         // no exception; err == EINVAL
+
+	try {
+		strict_stoi("99999999999");
+	} catch (const std::out_of_range&) {
+		std::puts("overflow throws std::out_of_range");
+	}
+	std::printf("%d %lu %g %ld %zu %d\n", port, mask, ratio, width, idx, err == EINVAL);
+	// 8080 31 0.25 42 2 1
 }
 ```
 
 [`examples/demo.cc`](examples/demo.cc) contrasts it with `std::stoi` on bad input.
 
+## 📦 Installation
+
+Requires a C++20 compiler and CMake 3.14 or newer; no dependencies. CI builds it
+on Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan, UBSan,
+and TSan builds; a manual workflow runs the long verification on four of them.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(strict_stox
+  GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git
+  GIT_TAG        5a68fc49888929be8bc0b5aaf21100294496f0a1)  # or main for the tip
+FetchContent_MakeAvailable(strict_stox)
+
+target_link_libraries(my_app PRIVATE strict_stox::strict_stox)
+```
+
+```cpp
+#include "strict_stox.hh"
+```
+
+Without CMake, copy `strict_stox.hh` onto your include path.
+
 ## 🎯 When to use it
 
-- ✅ Parsing numbers from users, files, or the network, where `"42abc"` must fail.
-- ❌ Locale-aware or grouped input (`"1,000"`): it uses the C `strto*` rules.
+Use it wherever a number arrives as text and `"42abc"`, `"1e999"` or `"99999999999"`
+must fail instead of turning into something.
+
+Not for:
+
+- **Rejecting leading white space or `+`.** The C `strto*` rules accept them, so
+  `strict_stoi(" 42")` and `strict_stoi("+42")` are 42; trailing white space is an
+  error.
+- **Grouped or localized input.** `"1,000"` is an error. The decimal point follows
+  the current locale, as in `strtod`: where it is `,`, `strict_stod("1.5")` fails. A
+  program that stays in the `"C"` locale can build with `-DSTRICT_STOX_C_LOCALE=ON`
+  to skip the locale query (3 to 5 ns per call) and read `.` everywhere.
+- **Text with an embedded NUL.** The number ends at the NUL, as it does for
+  `strto*`.
+- **The fastest halfway points.** On exact ties, subnormals and overflow
+  `fast_float` is 1.5x to 2.6x faster than the exact path.
 
 ## ⚡ Performance
 
-Plain input is parsed directly, with no buffer copy and no `errno` traffic. Everything
-else goes through `strto*`, with the same results, `errno` values, `idx` and exceptions.
+ns per element over 1,024 inputs, the best of 9 samples, mean of two runs; `-O3`,
+Apple clang 17, `fast_float` 3.10.1 (`6a3fabc`, its best result over builds). The
+C locale column is built with `-DSTRICT_STOX_C_LOCALE`:
 
-- Integers: an optional `-` and digits of the base that do not overflow.
-- `stod` and `stof`: `[-]digits[.digits][e[+-]digits]` of any length. The digits are read
-  eight at a time. Short numbers take Clinger's exact multiply or divide. The rest (17
-  digit doubles, long mantissas) take a 5 KB table of the 64 leading bits of the powers of
-  five and one 64-bit multiply, rounded to nearest. What the table cannot decide (about
-  one 17 digit text in a thousand) and every subnormal, zero or overflowing result are
-  converted exactly, by comparing the decimal value with the halfway point in big integers
-  (the slow path of Lemire's "Number Parsing at a Gigabyte per Second"), so no decimal text
-  reaches `strtod` in the default rounding mode, except the two results whose `errno`
-  differs between libcs: an exactly representable subnormal, and a text that rounds up from
-  below the subnormal range into the smallest normal value. `inf`, `nan`, hex floats,
-  whitespace, trailing text, a rounding mode other than to-nearest and a locale whose
-  decimal point is not `.` go to `strtod`. Apple's `strtod` aborts on some valid text
-  (`99004559013337762701442583720290300000000000.00000000000000`); no decimal text of that
-  kind reaches it.
-
-`ctest` checks both paths against libc and the frozen previous header; the floating
-point path also against `std::from_chars`, on the exact halfway point of every binade,
-the classic hard cases and random text (`test/fp_test.cc`, `tools/fp_mutants.py`), in each
-of the four rounding modes (`test/rounding_test.cc`), around the decimal point guard
-(`test/locale_test.cc`), and the exact path (`test/slow_test.cc`) on exact halfway points
-and thresholds with expected values that come from no libc, and on which texts reach libc.
-`tools/verify.cc` is the long sweep (billions of texts against libc, `std::from_chars` and `fast_float`; not part of
-`ctest`), and `tools/verify_mutants.py` checks that it catches the planted bugs of `tools/fp_mutants.py`.
-
-**The decimal point.** `strtod` reads the locale's decimal point, so in a locale where it
-is `,`, `strict_stod("1.5")` is `1` plus trailing text. The fast path keeps that: it asks
-`nl_langinfo` before it reads a `.` (3 ns on Apple silicon, 5 ns on the Intel laptop). A
-program that never leaves the `"C"` locale can skip the question with
-`-DSTRICT_STOX_C_LOCALE` (CMake: `-DSTRICT_STOX_C_LOCALE=ON`): plain decimals are then
-read with `.` in every locale. Both columns are below.
-
-Floating point, ns per element, best of 9 with one measurement at a time on the host, `-O3`, Apple clang 17,
-mean of two runs (one for the Intel C locale column). `fast_float` moves by up to 10%
-between builds, so its best result is shown. The C locale column skips the decimal point
-query (above).
-
-| workload | strict-stox | C locale | `fast_float` |
-|---|---|---|---|
-| **Apple M4 Pro** | | | |
-| `stod`, short (`12345.678`) | 8.7 | **5.9** | 7.5 |
-| `stod`, 17 digits (`%.17g`) | 10.8 | **7.2** | 10.6 |
-| `stod`, shortest repr (JSON) | 10.9 | **8.5** | 10.4 |
-| `stod`, 25-40 digits | 20.3 | **18.6** | 29.6 |
-| `stod`, 100 digits | 28.7 | **27.1** | 37.7 |
-| `stod`, 800 digits | 138 | 134 | **130** |
-| `stof`, short | 9.2 | **7.5** | 9.8 |
-| `stof`, 9 digits | 6.8 | **5.8** | 7.6 |
-| `stof`, 25-40 digits | 23.6 | **22.9** | 28.9 |
-| **Intel i9-9980HK** | | | |
-| `stod`, short | 19.1 | **13.4** | 15.3 |
-| `stod`, 17 digits | 25.2 | **19.9** | 23.2 |
-| `stod`, shortest repr (JSON) | 32.9 | **24.0** | 27.8 |
-| `stod`, 25-40 digits | 66.8 | **58.8** | 74.1 |
-| `stod`, 100 digits | 79.1 | **69.8** | 80.4 |
-| `stod`, 800 digits | 262 | 257 | 257 |
-| `stof`, short | 22.6 | **17.5** | 20.2 |
-| `stof`, 9 digits | 20.4 | **16.7** | 18.0 |
-| `stof`, 25-40 digits | 77.6 | 69.6 | **68.3** |
-
-Text the table cannot decide (an exact halfway point) and text `strtod` answers with `ERANGE`
-(subnormal, overflow, underflow), converted by the exact path. "Before" is the same text
-through `strtod`, which is what these took until the exact path. `fast_float` is faster
-here: its second table makes a halfway point cheap. Same conditions as above; the M4 column is
-the minimum of four runs, the i9 column the mean of eight:
-
-| workload | strict-stox | before (`strtod`) | `fast_float` |
-|---|---|---|---|
-| **Apple M4 Pro** | | | |
-| `stod`, exact halfway points (`2^52..2^53 + .5`) | 18.8 | 58.0 | 7.3 |
-| `stod`, odd integers `2^53..2^54` (halfway points) | 16.5 | 21.5 | 7.6 |
-| `stod`, subnormal | 18.4 | 26.6 | 9.1 |
-| `stod`, overflow and underflow | 22.0 | 30.5 | 10.3 |
-| `stof`, odd integers `2^24..2^25` (halfway points) | 12.2 | 34.2 | 5.7 |
-| `stof`, subnormal | 18.4 | 63.3 | 8.7 |
-| `stof`, overflow | 17.3 | 26.4 | 11.3 |
-| **Intel i9-9980HK** | | | |
-| `stod`, exact halfway points (`2^52..2^53 + .5`) | 43.3 | 128.1 | 18.8 |
-| `stod`, odd integers `2^53..2^54` (halfway points) | 36.8 | 42.8 | 17.6 |
-| `stod`, subnormal | 48.7 | 66.6 | 21.5 |
-| `stod`, overflow and underflow | 46.8 | 60.5 | 21.1 |
-| `stof`, odd integers `2^24..2^25` (halfway points) | 32.4 | 73.6 | 13.9 |
-| `stof`, subnormal | 46.5 | 151.4 | 21.8 |
-| `stof`, overflow | 42.4 | 60.1 | 23.2 |
-
-Text the fast path declines or that fails, and text at the top of the range. The first column is the frozen
-header that sends every text to `strto*` (`test/strict_stox_old.hh`), so a declined text pays the attempt
-on top of `strtod`: 4 to 5 ns on the M4 Pro and 9 to 11 ns on the i9 for leading white space, `inf` and `nan`.
-One measurement at a time on the host, one run, spread between two runs of the new column 0% to 7% (the
-`stoll` 20 digit row on the i9, 10%):
-
-| workload | M4 Pro: `strto*` only / strict-stox | i9-9980HK: `strto*` only / strict-stox |
+| workload | Apple M4 Pro: strict-stox / C locale / `fast_float` | Intel Core i9-9980HK: strict-stox / C locale / `fast_float` |
 |---|---:|---:|
-| `stoll`, `" 42"` (white space) | 16.8 / 15.0 | 40.6 / 39.7 |
-| `stoll`, `"abc"` (`EINVAL`) | 12.4 / 10.4 | 28.6 / 24.5 |
-| `stoll`, 20 digits (`ERANGE`) | 28.1 / 32.6 | 66.3 / 75.9 |
-| `stod`, `" 1.5"` (white space) | 19.0 / 23.7 | 42.1 / 50.8 |
-| `stod`, `inf` and `nan` | 17.4 / 21.6 | 30.9 / 41.1 |
-| `stod`, near `DBL_MAX` | 24.6 / 10.2 | 54.8 / 28.2 |
-| `stof`, `" 1.5"` (white space) | 20.1 / 23.9 | 47.3 / 55.9 |
-| `stof`, `inf` and `nan` | 16.9 / 21.9 | 32.0 / 43.2 |
-| `stof`, near `FLT_MAX` | 20.4 / 9.4 | 47.6 / 26.1 |
-
-Integers, Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
-(mean of two runs, one measurement at a time on the host; each run is the best of 9 samples over a pool of
-1024 inputs):
-
-| workload | strict-stox | `std::from_chars` |
-|---|---|---|
-| `stoi`, 1-9 digits | 6.4 | 7.2 |
-| `stoull`, 1-19 digits | 6.5 | 8.8 |
-| `stoul`, base 16 | 5.3 | 11.0 |
+| `stod`, short (`12345.678`) | 8.7 / 5.9 / 7.5 | 19.1 / 13.4 / 15.3 |
+| `stod`, 17 digits (`%.17g`) | 10.8 / 7.2 / 10.6 | 25.2 / 19.9 / 23.2 |
+| `stod`, shortest repr (JSON) | 10.9 / 8.5 / 10.4 | 32.9 / 24.0 / 27.8 |
+| `stod`, 100 digits | 28.7 / 27.1 / 37.7 | 79.1 / 69.8 / 80.4 |
+| `stof`, 9 digits | 6.8 / 5.8 / 7.6 | 20.4 / 16.7 / 18.0 |
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \
-  -DCMAKE_CXX_FLAGS="-DHAVE_FAST_FLOAT -I/path/to/fast_float/include"
-cmake --build build && ./build/strict_stox_bench
+  -DSTRICT_STOX_FAST_FLOAT_DIR=/path/to/fast_float/include
+cmake --build build --target strict_stox_bench
+./build/strict_stox_bench fp
 ```
 
-The `absl` column appears when abseil is installed, and the `fast_float` ones need
-`-DHAVE_FAST_FLOAT` and its include path. The floating point rows above come from
-`./build/strict_stox_bench fp` (the CMake build finds `fast_float` with
-`-DSTRICT_STOX_FAST_FLOAT_DIR=/path/to/fast_float/include`); `-DHAVE_PREV` adds the
-"before" column from a saved older header (see `bench/bench.cc`). The `fast%` column is
-the share of a row's inputs that the fast path takes: a row whose inputs mostly go to
-`strtod` measures `strtod`.
-
-[CHANGELOG.md](CHANGELOG.md) has the timings before each change.
+Integers on the M4 Pro: `stoi` of 1 to 9 digits takes 6.4 ns and
+`std::from_chars` 7.2; `stoul` in base 16, 5.3 and 11.0. Text the fast path
+declines (leading white space, `inf`, `nan`) pays 4 to 5 ns (M4 Pro) and 9 to
+11 ns (i9) on top of `strtod`.
+[docs/perf/README.md](docs/perf/README.md) has every row: long mantissas, the
+exact path against `strtod` and `fast_float`, declined text and integers.
 
 ## 📚 Documentation
 
-- [docs/API.md](docs/API.md): the functions, `idx`, and the no-throw form.
-- [ARCHITECTURE.md](ARCHITECTURE.md): how the wrappers are generated.
-- [docs/perf/verification.md](docs/perf/verification.md): the independent harness (`tools/verify.cc`) and what has run through it.
-- [AGENTS.md](AGENTS.md): repository map and traps.
-- [CHANGELOG.md](CHANGELOG.md): what changed, and when.
+- [docs/API.md](docs/API.md): the functions, `idx`, the no-throw form, and the
+  locale.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the wrapper, the fast path, the floating
+  point conversion and the exact path.
+- [docs/perf/README.md](docs/perf/README.md): the benchmark tables.
+- [docs/perf/verification.md](docs/perf/verification.md): the independent
+  harness (`tools/verify.cc`) and what has run through it.
+- [CHANGELOG.md](CHANGELOG.md): what changed, with numbers.
+- [AGENTS.md](AGENTS.md): repository map, invariants, and traps.
+- [Kronuz C++ Libraries](https://github.com/Kronuz/cpp-libraries/blob/main/AGENTS.md#strict-stox): the catalog entry.
 
 ## 🛠️ Building and testing
 
 ```sh
-cmake -B build && cmake --build build && ctest --test-dir build
-./build/strict_stox_demo
+cmake -B build
+cmake --build build
+ctest --test-dir build
 ```
+
+`./build/strict_stox_demo` runs the demo. Add `-DSTRICT_STOX_BUILD_BENCH=ON` to
+build `strict_stox_bench` (the `absl` column appears when abseil is installed),
+and `-DSTRICT_STOX_BUILD_VERIFY=ON` to build `strict_stox_verify` with two short
+runs of it under `ctest`.
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first. CI must
-pass on every platform.
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) and the
+catalog's [rules of engagement](https://github.com/Kronuz/cpp-libraries/blob/main/AGENTS.md#rules-of-engagement)
+first; CI must pass on every platform.
 
 ## 📄 License
 
-MIT, Copyright (c) 2015-2019 Dubalu LLC. See [LICENSE](LICENSE). Extracted from
-[Xapiand](https://github.com/Kronuz/Xapiand).
+MIT, Copyright (c) 2026 Germán Méndez Bravo and Copyright (c) 2015-2020 Dubalu
+LLC. See [LICENSE](LICENSE). Extracted from [Xapiand](https://github.com/Kronuz/Xapiand).
