@@ -104,39 +104,48 @@ Not for:
 - **Grouped or localized input.** `"1,000"` is an error. The decimal point follows
   the current locale, as in `strtod`: where it is `,`, `strict_stod("1.5")` fails. A
   program that stays in the `"C"` locale can build with `-DSTRICT_STOX_C_LOCALE=ON`
-  to skip the locale query (3 to 5 ns per call) and read `.` everywhere.
+  to skip the locale query (about 3 ns per call on the M4 Pro) and read `.` everywhere.
 - **Text with an embedded NUL.** The number ends at the NUL, as it does for
   `strto*`.
-- **The fastest halfway points.** On exact ties, subnormals and overflow
-  `fast_float` is 1.5x to 2.6x faster than the exact path.
+- **The fastest decimals.** `fast_float` parses short decimals in 6.4 ns against 8.9 for
+  strict-stox (`12345.678`, M4 Pro), and on exact ties, subnormals and overflow it is 1.3x to
+  3.5x faster than the exact path.
 
 ## ⚡ Performance
 
-ns per element over 1,024 inputs, the best of 9 samples, mean of two runs; `-O3`,
-Apple clang 17, `fast_float` 3.10.1 (`6a3fabc`, its best result over builds). The
-C locale column is built with `-DSTRICT_STOX_C_LOCALE`:
+ns per number over 1,024 inputs, the best of 9 samples, the mean of two runs of `bench/bench.cc`.
+*strict-stox* is `strict_stod` and `strict_stof` of this library. *C locale* is the same header
+built with `-DSTRICT_STOX_C_LOCALE`, which reads `.` as the decimal point without asking the locale
+(a build mode, not another library). *libc* is `strtod` and `strtof` on a NUL-terminated copy, which
+is what strict-stox falls back to. `std::from_chars` is the C++17 function of the platform's
+standard library (its floating-point form needs macOS 26, so only the M4 Pro runs it), and
+`fast_float` is [fast_float v8.3.3](https://github.com/fastfloat/fast_float/tree/v8.3.3), the widely
+used header-only parser behind several standard libraries' `from_chars`. The bench compares the
+inputs each of them accepts bit for bit: libc returns the same value as strict-stox on every input
+strict-stox accepts, and `std::from_chars` and `fast_float` the same except for text outside their
+syntax (leading white space) and text that strict-stox reports an error on (out of range);
+`strict_stox_bench --check` runs the comparison. Apple clang 17, `-O3`, on an Apple M4 Pro (macOS
+26). Bold is the fastest implementation of a row (the C locale build is a mode of strict-stox, not
+counted).
 
-| workload | Apple M4 Pro: strict-stox / C locale / `fast_float` | Intel Core i9-9980HK: strict-stox / C locale / `fast_float` |
-|---|---:|---:|
-| `stod`, short (`12345.678`) | 8.7 / 5.9 / 7.5 | 19.1 / 13.4 / 15.3 |
-| `stod`, 17 digits (`%.17g`) | 10.8 / 7.2 / 10.6 | 25.2 / 19.9 / 23.2 |
-| `stod`, shortest repr (JSON) | 10.9 / 8.5 / 10.4 | 32.9 / 24.0 / 27.8 |
-| `stod`, 100 digits | 28.7 / 27.1 / 37.7 | 79.1 / 69.8 / 80.4 |
-| `stof`, 9 digits | 6.8 / 5.8 / 7.6 | 20.4 / 16.7 / 18.0 |
+| Workload | strict-stox | C locale | libc | `std::from_chars` | `fast_float` |
+|---|---:|---:|---:|---:|---:|
+| **Apple M4 Pro** | | | | | |
+| `stod`, short (`12345.678`) | 8.9 | 6.0 | 12.1 | 15.3 | **6.4** |
+| `stod`, 17 digits (`%.17g`) | 11.1 | 8.0 | 18.8 | 25.5 | **8.6** |
+| `stod`, shortest repr (JSON) | 11.3 | 8.7 | 19.1 | 48.7 | **8.7** |
+| `stod`, 100 digits | **28.4** | 27.1 | 92.3 | 147.0 | 121.7 |
+| `stof`, 9 digits | 7.3 | 5.8 | 15.7 | 174.3 | **6.2** |
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \
-  -DSTRICT_STOX_FAST_FLOAT_DIR=/path/to/fast_float/include
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON
 cmake --build build --target strict_stox_bench
 ./build/strict_stox_bench fp
 ```
 
-Integers on the M4 Pro: `stoi` of 1 to 9 digits takes 6.4 ns and
-`std::from_chars` 7.2; `stoul` in base 16, 5.3 and 11.0. Text the fast path
-declines (leading white space, `inf`, `nan`) pays 4 to 5 ns (M4 Pro) and 9 to
-11 ns (i9) on top of `strtod`.
-[docs/perf/README.md](docs/perf/README.md) has every row: long mantissas, the
-exact path against `strtod` and `fast_float`, declined text and integers.
+The bench fetches `fast_float` at that tag (or reads `-DSTRICT_STOX_FAST_FLOAT_DIR=<include dir>`) and
+uses abseil when CMake finds it; `-DSTRICT_STOX_C_LOCALE=ON` builds the C locale column.
+[docs/perf/](docs/perf/README.md) has every row: long mantissas, the exact path, declined text and integers.
 
 ## 📚 Documentation
 

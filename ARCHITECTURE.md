@@ -103,7 +103,7 @@ the digit count. Then, in order:
    `fast_fp` is the code that short texts run) finds the point with `memchr` and does not read the
    digits one at a time: leading zeros are skipped eight at a time, the 19 digits are taken with
    eight-byte loads, and the rest of each run is tested for a non-zero digit eight bytes at a
-   time (800 digits cost about the same as for `fast_float`).
+   time (800 digits cost less than `fast_float` v8.3.3 needs; docs/perf has the rows).
 
 The conversions round to nearest. `strtod` follows the current rounding mode, so the
 fast path is skipped when it is not to nearest (`rounds_to_nearest`, a volatile
