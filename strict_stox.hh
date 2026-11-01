@@ -76,41 +76,43 @@ struct DigitTable {
 };
 inline constexpr DigitTable digits{};
 
-// Integers: [-]digits in `base` (2..36), whole input, < 64 bytes, no overflow.
+// Integers: [-]digits in `base` (2..36), whole input, < 64 bytes. 1: out holds the value. 0: declined (strto* decides).
+// 2: a value out of range of R. The digits up to where the range was left are all valid, and strto* reads the same digits,
+// so it reports ERANGE whatever follows them.
 template <typename R>
-inline bool fast_int(R& out, std::string_view s, int base) noexcept {
+inline int fast_int(R& out, std::string_view s, int base) noexcept {
 	using U = std::make_unsigned_t<R>;
 	const std::size_t n = s.size();
-	if (n == 0 || n >= 64 || base < 2 || base > 36) { return false; }
+	if (n == 0 || n >= 64 || base < 2 || base > 36) { return 0; }
 	const auto* p = reinterpret_cast<const unsigned char*>(s.data());
 	const auto* e = p + n;
 	bool neg = false;
 	if constexpr (std::is_signed_v<R>) {
 		if (*p == '-') {
 			neg = true;
-			if (++p == e) { return false; }
+			if (++p == e) { return 0; }
 		}
 	}
 	U acc = 0;
 	const auto ub = static_cast<U>(base);
 	do {
 		const unsigned d = digits.v[*p];
-		if (d >= static_cast<unsigned>(base)) { return false; }
+		if (d >= static_cast<unsigned>(base)) { return 0; }
 #if defined(__GNUC__) || defined(__clang__)
-		if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return false; }
+		if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }
 #else
-		if (acc > (std::numeric_limits<U>::max() - d) / ub) { return false; }
+		if (acc > (std::numeric_limits<U>::max() - d) / ub) { return 2; }
 		acc = acc * ub + d;
 #endif
 	} while (++p != e);
 	if constexpr (std::is_signed_v<R>) {
 		const U lim = static_cast<U>(std::numeric_limits<R>::max());
-		if (neg ? acc > lim + 1 : acc > lim) { return false; }
+		if (neg ? acc > lim + 1 : acc > lim) { return 2; }
 		out = neg ? static_cast<R>(U(0) - acc) : static_cast<R>(acc);
 	} else {
 		out = static_cast<R>(acc);
 	}
-	return true;
+	return 1;
 }
 
 // ---- float/double ----------------------------------------------------------
@@ -639,6 +641,10 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 			};
 			if (w <= (1ULL << 53) && q <= 22 && q >= -22) {
 				b = std::bit_cast<bits_t>(q >= 0 ? static_cast<double>(w) * pow10[q] : static_cast<double>(w) / pow10[-q]);
+			} else if (q == 0) {
+				// An integer of at most 19 digits: the conversion of a 64 bit integer is one correctly rounded operation, ties to even,
+				// and the table would decline the exact halfway points.
+				b = std::bit_cast<bits_t>(static_cast<double>(w));
 			} else if (!el_convert<R>(w, static_cast<int>(q), b)) {
 				return false;
 			}
@@ -1103,6 +1109,24 @@ inline int fp_slow(R& out, std::string_view s) noexcept {
 	return 1;
 }
 
+// True when the text can be decimal: an optional '-', then a digit or '.'. fast_fp and fp_slow decline every other first byte
+// (white space, '+', the letters of inf and nan, nothing at all), so such text goes to strto* without trying either.
+inline bool starts_decimal(const char* p, std::size_t n) noexcept {
+	if (n == 0) { return false; }
+	unsigned c = static_cast<unsigned char>(*p);
+	if (c == '-') {
+		if (n == 1) { return false; }
+		c = static_cast<unsigned char>(p[1]);
+	}
+	return c - '0' <= 9 || c == '.';
+}
+
+#ifdef STRICT_STOX_COUNT_LIBC
+// Test seam: the texts that enter fp_decline (fast_fp declined them), and the calls of the strto* path of the wrapper.
+inline thread_local std::size_t decline_calls = 0;
+inline thread_local std::size_t strto_calls = 0;
+#endif
+
 // What follows a declined fast_fp, out of line so that the code the short texts run (the wrapper around fast_fp) is small and as
 // it was: the exact path, then its result for the caller. 0: the strto* path decides; 1: out holds the value and idx the whole
 // text; 2: ERANGE (out is 0, idx untouched).
@@ -1111,6 +1135,9 @@ template <typename R>
 __attribute__((noinline))
 #endif
 inline int fp_decline(R& out, std::string_view s, std::size_t* idx) noexcept {
+#ifdef STRICT_STOX_COUNT_LIBC
+	++decline_calls;
+#endif
 	const int status = fp_slow<R>(out, s);
 	if (status == 1) {
 		if (idx != nullptr) { *idx = s.size(); }
@@ -1152,6 +1179,9 @@ class Stox {
 
 	template <typename T, typename... Args>
 	auto _stox(std::true_type, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
+#ifdef STRICT_STOX_COUNT_LIBC
+		++strict_stox_detail::strto_calls;
+#endif
 		// strto* needs a NUL-terminated copy of the whole input: short text goes to a stack
 		// buffer, longer text (long zero runs, long decimal strings) to the heap. An embedded
 		// NUL ends the number there, as for any C string.
@@ -1213,7 +1243,12 @@ class Stox {
 			if constexpr (std::is_integral_v<R>) {
 				const int base = (static_cast<int>(args), ...);
 				R r;
-				if (!strict_stox_detail::fast_int(r, str, base)) { return 0; }
+				const int status = strict_stox_detail::fast_int(r, str, base);
+				if (status != 1) {
+					if (status == 0) { return 0; }
+					out = static_cast<Out>(0);
+					return 2;
+				}
 				if constexpr (!std::is_void_v<T>) {
 					if (r < std::numeric_limits<T>::min() || std::numeric_limits<T>::max() < r) { return 0; }
 				}
@@ -1225,6 +1260,7 @@ class Stox {
 			using R = std::invoke_result_t<F, const char*, char**>;
 			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
 				if (!(_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return 0; }
+				if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return 0; }
 				R r;
 				if (strict_stox_detail::fast_fp(r, str)) {
 					out = static_cast<Out>(r);

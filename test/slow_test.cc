@@ -9,7 +9,7 @@
 // normal value.
 //
 // The test counts the calls that reach libc (-DSTRICT_STOX_COUNT_LIBC makes stod and stof call a counting
-// wrapper) and checks four things:
+// wrapper) and checks these things:
 //   1. a curated table, with expected values from exact rational arithmetic (tools/slow_cases.py), none from
 //      a libc: this includes the text on which Apple's strtod aborts, which must not reach libc at all;
 //   2. the texts that must reach libc, against libc;
@@ -21,6 +21,9 @@
 //   4. random decimal texts of every length and exponent: the exact path with and without the table
 //      (fp_slow<R, false> and fp_slow<R, true>) must agree, the API must equal libc, and libc must be reached
 //      only for the cases above.
+//   5. the route of a text: the first byte of a text that is not decimal ('-' and then a digit or '.') sends it to strto*
+//      without a try of the fast path or the exact path, and a decimal text never reaches strto*; an integer out of range
+//      is decided without strto*.
 // Where libc may abort on valid text (Apple), the text is first tried in a child process.
 #ifndef STRICT_STOX_COUNT_LIBC
 #error "build this test with -DSTRICT_STOX_COUNT_LIBC=1"
@@ -595,6 +598,112 @@ static void test_small_vs_big(std::mt19937_64& rng) {
 	std::printf("cmp_small: %ld comparisons against cmp_scaled\n", compared);
 }
 
+// ---- 5. the route of a text -----------------------------------------------------------------------------
+
+struct Route {
+	std::size_t declined, strto, libc;
+};
+static Route route_now() { return Route{D::decline_calls, D::strto_calls, D::libc_calls}; }
+
+// A text whose first significant byte cannot start a decimal goes straight to strto*: it is not tried by fast_fp and does not enter
+// fp_decline. A valid decimal text is converted by fast_fp or by the exact path and never reaches strto*.
+template <typename R>
+static void check_route(const std::string& t, bool decimal_start) {
+	for (const bool useidx : {false, true}) {
+		const Route r0 = route_now();
+		const oracle::Result got = oracle::api_result<R>(t, useidx);
+		const Route r1 = route_now();
+		if (decimal_start) {
+			if (r1.strto != r0.strto || r1.libc != r0.libc) { FAIL("%s \"%s\" (idx %d): a decimal text reached strto*", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str(), (int)useidx); }
+		} else {
+			if (r1.declined != r0.declined) { FAIL("%s \"%s\" (idx %d): entered fp_decline", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str(), (int)useidx); }
+			if (r1.strto != r0.strto + 1 || r1.libc != r0.libc + 1) { FAIL("%s \"%s\" (idx %d): did not reach strto*", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str(), (int)useidx); }
+		}
+		if (libc_safe(t) && !oracle::same(got, oracle::libc_result<R>(t, useidx), useidx)) { FAIL("%s \"%s\" (idx %d): differs from libc", sizeof(R) == 4 ? "stof" : "stod", clip(t).c_str(), (int)useidx); }
+	}
+}
+
+template <typename R>
+static void test_first_byte() {
+	for (int b = 0; b < 256; ++b) {
+		const char c = static_cast<char>(b);
+		const bool digit = b >= '0' && b <= '9';
+		const std::string tail = std::string(1, c) + "5";
+		check_route<R>(tail, digit || b == '.' || b == '-');             // "-5" is decimal
+		check_route<R>("-" + tail, digit || b == '.');                   // "--5" is not
+	}
+	// Decimal text of any shape starts the fast path, and the exact path takes what it declines, without strto*.
+	for (const char* t : {"-.5", ".5", "-.5e1", "5", "-5", "1e400", "-1e400", ".5e-400", "-.5e400", "9007199254740993", "123456789012345678901234567890"}) { check_route<R>(t, true); }
+	// A lone sign or point is declined by both and decided by strto*; the route is only the cost.
+	for (const char* t : {"-", ".", "-.", "", "--", "-+", "-e5", ".e5"}) {
+		const Route r0 = route_now();
+		const oracle::Result got = oracle::api_result<R>(t, false);
+		if (route_now().strto != r0.strto + 1) { FAIL("\"%s\": did not reach strto*", t); }
+		if (!oracle::same(got, oracle::libc_result<R>(t, false), false)) { FAIL("\"%s\": differs from libc", t); }
+	}
+}
+
+// An integer out of range of the type strto* returns is ERANGE decided by the fast path, whatever follows the digits that left the
+// range: value 0, idx untouched, the caller's errno kept, strto* not called. libc agrees that the digits overflow.
+template <typename F, typename G>
+static void check_erange(const char* name, F nothrow, G throwing, const std::string& t, int base, bool is_signed) {
+	errno = 0;
+	if (is_signed) { (void)std::strtoll(t.c_str(), nullptr, base); } else { (void)std::strtoull(t.c_str(), nullptr, base); }
+	if (errno != ERANGE) { FAIL("%s \"%s\" base %d: libc does not report ERANGE (test text)", name, clip(t).c_str(), base); }
+	const std::size_t s0 = D::strto_calls;
+	int e = -1;
+	std::size_t idx = 777;
+	errno = 4242;
+	const auto v = nothrow(&e, t, &idx, base);
+	if (e != ERANGE || v != 0 || idx != 777 || errno != 4242) { FAIL("%s \"%s\" base %d: errno %d value %lld idx %zu kept %d", name, clip(t).c_str(), base, e, (long long)v, idx, (int)(errno == 4242)); }
+	if (D::strto_calls != s0) { FAIL("%s \"%s\" base %d: reached strto*", name, clip(t).c_str(), base); }
+	bool threw = false;
+	try {
+		(void)throwing(t, base);
+	} catch (const std::out_of_range& ex) {
+		threw = std::string(ex.what()) == std::string(name) + ": Out of range value: " + t;
+	}
+	if (!threw || D::strto_calls != s0) { FAIL("%s \"%s\" base %d: threw %d, strto* calls %zu", name, clip(t).c_str(), base, (int)threw, D::strto_calls - s0); }
+}
+
+#define ERANGE_CASE(FN, SIGNED, TEXT, BASE)                                                                                   \
+	check_erange(#FN, [](int* e, const std::string& s, std::size_t* i, int b) { return strict_##FN(e, s, i, b); },           \
+	             [](const std::string& s, int b) { return strict_##FN(s, nullptr, b); }, TEXT, BASE, SIGNED)
+
+static void test_int_range() {
+	// Wider than 64 bits for every function: unsigned and signed, with and without trailing text.
+	for (const char* t : {"18446744073709551616", "99999999999999999999", "99999999999999999999x", "99999999999999999999 5", "184467440737095516150", "000000000000000000000018446744073709551616",
+	                      "99999999999999999999999999999999999999999999999999999999999999"}) {
+		ERANGE_CASE(stoull, false, t, 10);
+		ERANGE_CASE(stoul, false, t, 10);
+		ERANGE_CASE(stoz, false, t, 10);
+		ERANGE_CASE(stou, false, t, 10);
+		ERANGE_CASE(stoll, true, t, 10);
+		ERANGE_CASE(stol, true, t, 10);
+		ERANGE_CASE(stoi, true, t, 10);
+		ERANGE_CASE(stoll, true, std::string("-") + t, 10);
+		ERANGE_CASE(stol, true, std::string("-") + t, 10);
+		ERANGE_CASE(stoi, true, std::string("-") + t, 10);
+	}
+	// The edge of the signed range, in the text where only the last digit leaves it (text after the digits is left to strto*).
+	for (const char* t : {"9223372036854775808", "9223372036854775809"}) { ERANGE_CASE(stoll, true, t, 10); }
+	for (const char* t : {"-9223372036854775809", "-9223372036854775810"}) { ERANGE_CASE(stoll, true, t, 10); }
+	// Other bases.
+	for (const char* t : {"10000000000000000", "ffffffffffffffffff", "FFFFFFFFFFFFFFFFFFg", "ffffffffffffffffffffffffffffffffffffffff"}) {
+		ERANGE_CASE(stoull, false, t, 16);
+		ERANGE_CASE(stoll, true, t, 16);
+	}
+	for (const char* t : {"zzzzzzzzzzzzzzzzz", "zzzzzzzzzzzzzzzzzzzzzzzz"}) { ERANGE_CASE(stoull, false, t, 36); }
+	for (const char* t : {"2000000000000000000000", "7777777777777777777777"}) { ERANGE_CASE(stoull, false, t, 8); }
+	// What is in range is converted by the fast path, with no strto*: the value of the limits.
+	const std::size_t s0 = D::strto_calls;
+	int e = -1;
+	if (strict_stoull(&e, "18446744073709551615") != 18446744073709551615ULL || e != 0) { FAIL("stoull(2^64-1): errno %d", e); }
+	if (strict_stoll(&e, "9223372036854775807") != 9223372036854775807LL || e != 0) { FAIL("stoll(2^63-1): errno %d", e); }
+	if (strict_stoll(&e, "-9223372036854775808") != -9223372036854775807LL - 1 || e != 0) { FAIL("stoll(-2^63): errno %d", e); }
+	if (D::strto_calls != s0) { FAIL("the limits of the types reached strto*"); }
+}
+
 // Zero texts, straight into the exact path (the fast path takes them first, so only a direct call reaches the branch): +0 or -0 by
 // the sign, whatever the digits and the exponent.
 template <typename R>
@@ -632,6 +741,9 @@ int main() {
 	test_random<double>(rng, random_count);
 	test_random<float>(rng, random_count);
 	test_api_semantics();
+	test_first_byte<double>();
+	test_first_byte<float>();
+	test_int_range();
 	if (failures != 0) {
 		std::fprintf(stderr, "%ld failures\n", failures);
 		return 1;
