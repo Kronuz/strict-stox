@@ -204,7 +204,11 @@ static void check_want(const std::string& text, const Want& w, const char* what,
 	}
 	// Whatever libc is reached or not, the answer is libc's (where libc survives the text).
 	if (libc_safe(text)) {
-		if (!oracle::same(a.r, oracle::libc_result<R>(text, false), false)) { FAIL("%s %s: differs from libc", what, clip(text).c_str()); }
+		const oracle::Result lc = oracle::libc_result<R>(text, false);
+		if (!oracle::same(a.r, lc, false)) {
+			FAIL("%s %s: differs from libc: api bits %llx errno %d, libc bits %llx errno %d (reached libc: %d); the text: %s", what, clip(text).c_str(), (unsigned long long)a.r.bits, a.r.err, (unsigned long long)lc.bits,
+				lc.err, (int)a.libc, text.size() <= 400 ? text.c_str() : "(long)");
+		}
 	}
 }
 
