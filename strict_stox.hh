@@ -491,15 +491,20 @@ inline std::uint64_t append_digits(const char* p, std::size_t n, std::uint64_t w
 	return w;
 }
 
-// More than 19 digits: the integer digits [ib, ie) and the fraction digits [fb, fe) give w, the first
-// 19 significant digits, and, when any later digit is not zero, the exact value lies strictly between
-// w and w + 1 (in units of 10^q). Rounding is monotonic, so if both ends round to the same value, so
-// does the text. An all-zero mantissa is zero.
+// More than 19 digits: [p, mend) holds the integer digits, an optional '.' and the fraction digits. The first
+// 19 significant digits give w and, when any later digit is not zero, the exact value lies strictly between w
+// and w + 1 (in units of 10^q). Rounding is monotonic, so if both ends round to the same value, so does the
+// text. An all-zero mantissa is zero. The point is found here, not passed in, so that fast_fp keeps its
+// registers for the short texts it is written for.
 template <typename R>
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
-inline bool fp_long(const char* const ib, const char* const ie, const char* const fb, const char* const fe, std::ptrdiff_t q, typename fp_traits<R>::bits& out) noexcept {
+inline bool fp_long(const char* const ib, const char* const mend, std::ptrdiff_t q, typename fp_traits<R>::bits& out) noexcept {
+	const char* ie = static_cast<const char*>(std::memchr(ib, '.', static_cast<std::size_t>(mend - ib)));
+	const char* fb = mend;  // the fraction digits [fb, fe)
+	const char* const fe = mend;
+	if (ie != nullptr) { fb = ie + 1; } else { ie = mend; }
 	std::uint64_t w;
 	bool sticky;
 	const char* const a = skip_zeros(ib, ie);
@@ -580,14 +585,12 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 	const char* const m0 = p;
 	std::uint64_t w = 0;
 	p = scan_digits(p, e, w);
-	const char* const ie = p;
-	const char* f0 = p;  // the fraction digits [f0, mend): none when there is no '.'
 	std::ptrdiff_t nd = p - m0;
 	std::ptrdiff_t nf = 0;
 	bool dot = false;
 	if (p != e && *p == '.') {
 		dot = true;
-		f0 = ++p;
+		const char* const f0 = ++p;
 		p = scan_digits(p, e, w);
 		nf = p - f0;
 		nd += nf;
@@ -614,7 +617,7 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 	}
 	bits_t b;
 	if (nd > 19) {
-		if (!fp_long<R>(m0, ie, f0, mend, ex, b)) { return false; }
+		if (!fp_long<R>(m0, mend, ex, b)) { return false; }
 	} else if (w == 0) {
 		b = 0;
 	} else {

@@ -93,39 +93,43 @@ program that never leaves the `"C"` locale can skip the question with
 `-DSTRICT_STOX_C_LOCALE` (CMake: `-DSTRICT_STOX_C_LOCALE=ON`): plain decimals are then
 read with `.` in every locale. Both columns are below.
 
-Floating point, ns per element, best of 9 under `quiet strict`, `-O3`, Apple clang 17.
-Each Apple M4 Pro cell is the mean of four runs, which differ by at most 3%; each Intel
-cell is one run. `fast_float` moves by up to 10% between builds, so its best result is
-shown. The C locale column skips the decimal point query (above).
+Floating point, ns per element, best of 9 under `quiet strict`, `-O3`, Apple clang 17,
+mean of two runs (one for the Intel C locale column). `fast_float` moves by up to 10%
+between builds, so its best result is shown. The C locale column skips the decimal point
+query (above).
 
 | workload | strict-stox | C locale | `fast_float` |
 |---|---|---|---|
-| **Apple M4 Pro** (`d611a3a`) | | | |
-| `stod`, short (`12345.678`) | 8.5 | **5.9** | 7.4 |
-| `stod`, 17 digits (`%.17g`) | 10.8 | **7.3** | 10.4 |
-| `stod`, shortest repr (JSON) | 10.7 | **8.1** | 10.4 |
-| `stod`, 25-40 digits | 18.8 | **16.9** | 29.5 |
-| `stod`, 100 digits | 26.8 | **25.1** | 37.3 |
-| `stod`, 800 digits | 131 | **129** | 131 |
-| `stof`, short | 9.4 | **7.5** | 9.8 |
-| `stof`, 9 digits | 6.7 | **5.7** | 7.6 |
-| `stof`, 25-40 digits | 21.8 | **20.0** | 29.2 |
-| **Intel i9-9980HK** (`199e0be`) | | | |
-| `stod`, short | 18.4 | **13.7** | 15.6 |
-| `stod`, 17 digits | 24.9 | **19.2** | 22.5 |
-| `stod`, shortest repr (JSON) | 33.7 | **23.6** | 27.1 |
-| `stof`, short | 22.7 | **16.7** | 19.2 |
-| `stof`, 9 digits | 21.2 | **16.5** | 16.6 |
+| **Apple M4 Pro** | | | |
+| `stod`, short (`12345.678`) | 8.7 | **5.9** | 7.5 |
+| `stod`, 17 digits (`%.17g`) | 10.8 | **7.2** | 10.6 |
+| `stod`, shortest repr (JSON) | 10.9 | **8.5** | 10.4 |
+| `stod`, 25-40 digits | 20.3 | **18.6** | 29.6 |
+| `stod`, 100 digits | 28.7 | **27.1** | 37.7 |
+| `stod`, 800 digits | 138 | 134 | **130** |
+| `stof`, short | 9.2 | **7.5** | 9.8 |
+| `stof`, 9 digits | 6.8 | **5.8** | 7.6 |
+| `stof`, 25-40 digits | 23.6 | **22.9** | 28.9 |
+| **Intel i9-9980HK** | | | |
+| `stod`, short | 19.1 | **13.4** | 15.3 |
+| `stod`, 17 digits | 25.2 | **19.9** | 23.2 |
+| `stod`, shortest repr (JSON) | 32.9 | **24.0** | 27.8 |
+| `stod`, 25-40 digits | 66.8 | **58.8** | 74.1 |
+| `stod`, 100 digits | 79.1 | **69.8** | 80.4 |
+| `stod`, 800 digits | 262 | 257 | 257 |
+| `stof`, short | 22.6 | **17.5** | 20.2 |
+| `stof`, 9 digits | 20.4 | **16.7** | 18.0 |
+| `stof`, 25-40 digits | 77.6 | 69.6 | **68.3** |
 
 Integers, Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
-(mean of four runs under `quiet strict` at `d611a3a`, which differ by at most 5%; each run
-is the best of 9 samples over a pool of 1024 inputs):
+(mean of two runs under `quiet strict`; each run is the best of 9 samples over a pool of
+1024 inputs):
 
 | workload | strict-stox | `std::from_chars` |
 |---|---|---|
-| `stoi`, 1-9 digits | 6.0 | 7.4 |
-| `stoull`, 1-19 digits | 6.5 | 8.9 |
-| `stoul`, base 16 | 5.2 | 10.8 |
+| `stoi`, 1-9 digits | 6.4 | 7.2 |
+| `stoull`, 1-19 digits | 6.5 | 8.8 |
+| `stoul`, base 16 | 5.3 | 11.0 |
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \

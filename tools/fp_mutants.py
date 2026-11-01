@@ -57,7 +57,8 @@ MUTANTS = {
     "long_window_18": ("const std::size_t k = std::min<std::size_t>(19, static_cast<std::size_t>(fe - b));", "const std::size_t k = std::min<std::size_t>(18, static_cast<std::size_t>(fe - b));"),
     "long_window_int": ("const std::size_t k = std::min<std::size_t>(19 - ni, static_cast<std::size_t>(fe - fb));", "const std::size_t k = std::min<std::size_t>(20 - ni, static_cast<std::size_t>(fe - fb));"),
     "long_all_zero": ("if (b == fe) {\n\t\t\tout = 0;", "if (b == fe) {\n\t\t\tout = 1;"),
-    "long_fraction_start": ("fp_long<R>(m0, ie, f0, mend, ex, b)", "fp_long<R>(m0, ie, ie, mend, ex, b)"),
+    "long_fraction_start": ("if (ie != nullptr) { fb = ie + 1; } else { ie = mend; }", "if (ie != nullptr) { fb = ie; } else { ie = mend; }"),
+    "long_no_point": ("if (ie != nullptr) { fb = ie + 1; } else { ie = mend; }", "if (ie != nullptr) { fb = ie + 1; } else { ie = ib; }"),
     # the digit helpers: the zero scan, the non-zero scan and the digit accumulation
     "skip_zeros_shift": ("return p + (ctz64(v) >> 3);", "return p + (ctz64(v) >> 4);"),
     "any_nonzero_first_byte": ("if (v != 0x3030303030303030ULL) { return true; }", "if ((v >> 8) != 0x0030303030303030ULL) { return true; }"),

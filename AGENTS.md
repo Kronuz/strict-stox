@@ -17,7 +17,7 @@ test/rounding_test.cc        strict_stod/stof under all four rounding modes (fes
 test/locale_test.cc          The decimal point guard: a mock decimal point (always runs) and a real comma locale, global and per thread (runs where one is installed).
 test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the two tests above.
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
-tools/fp_mutants.py          Breaks the fast path in 50 ways and requires the floating point tests to fail on each; the rounding and locale mutants must fail their own test.
+tools/fp_mutants.py          Breaks the fast path in 51 ways and requires the floating point tests to fail on each; the rounding and locale mutants must fail their own test.
 bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH).
 CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.

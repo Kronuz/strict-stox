@@ -102,33 +102,45 @@ release tags yet, so entries are dated.
 - **Text of more than 19 digits was no faster than `strtod`.** After the digit scan, the
   conversion of 199e0be read the mantissa again byte by byte (four branches per digit), so
   25 to 40 digit text took 55 ns against 45 for the previous `strtod` path, and 800
-  digits 1.36 us. The first 19 significant digits are now taken with eight-byte loads
-  from the integer and fraction runs the scan has already delimited, leading zeros are skipped
-  eight at a time, and the rest of each run is tested for a non-zero digit eight bytes
-  at a time. Results are unchanged: for every text of the tests below, the new and the
-  old `fast_fp` take or decline the text alike and return the same bits.
+  digits 1.36 us. `fp_long` now finds the decimal point with `memchr`, skips leading zeros
+  eight at a time, takes the first 19 significant digits with eight-byte loads and tests the
+  rest of each run for a non-zero digit eight bytes at a time. `fast_fp`, the code that short
+  texts run, is the text of 199e0be, and its generated code is identical to it (clang and g++,
+  x86_64 and arm64, instruction streams compared). Results are unchanged: for every text of
+  the runs below, the new and the 199e0be `fast_fp` take or decline the text alike and return
+  the same bits.
 
-  Apple M4 Pro, Apple clang 17 `-O3`, `quiet strict`, ns per element, `bench/bench.cc` with
-  199e0be as "before" in the same process (mean of four runs of best of 9, which differ by at
-  most 3%; `fast_float` best result):
+  ns per element, `bench/bench.cc` with 199e0be as "before" in the same process, Apple M4 Pro
+  (Apple clang 17 `-O3`, `quiet strict`, mean of two runs of best of 9; `fast_float` best result),
+  and Intel i9-9980HK (the same compiler, 199e0be and the new header each the only
+  header of its binary, mean of two runs):
 
-  | workload | 199e0be | now | `fast_float` |
-  |---|---|---|---|
-  | `stod`, 25-40 digits | 55.7 | 18.8 | 29.5 |
-  | `stod`, 100 digits | 172.7 | 26.8 | 37.3 |
-  | `stod`, 800 digits | 1,344 | 131 | 131 |
-  | `stof`, 25-40 digits | 58.9 | 21.8 | 29.2 |
+  | workload | M4 199e0be | M4 now | M4 `fast_float` | i9 199e0be | i9 now | i9 `fast_float` |
+  |---|---|---|---|---|---|---|
+  | `stod`, 25-40 digits | 55.3 | 20.3 | 29.6 | 106.8 | 66.8 | 74.1 |
+  | `stod`, 100 digits | 173.4 | 28.7 | 37.7 | 195.8 | 79.1 | 80.4 |
+  | `stod`, 800 digits | 1,371 | 138 | 130 | 1,208 | 262 | 257 |
+  | `stof`, 25-40 digits | 58.5 | 23.6 | 28.9 | 140.1 | 77.6 | 68.3 |
 
-  The other rows (17 digits and fewer) change by -11% to +1.7%: `stod` short 8.5 -> 8.5,
-  17 digits 10.7 -> 10.8, 17 digits with any exponent 12.1 -> 11.4, shortest repr 12.0 -> 10.7,
-  `stof` short 9.5 -> 9.4; with `STRICT_STOX_C_LOCALE` `stod` short 5.8 -> 5.9, 17 digits
-  7.3 -> 7.3, `stof` short 7.5 -> 7.5. The A/A spread of those rows is 1% to 5%.
-  The generated code of `fast_fp` is not identical to 199e0be's (clang 20 on x86_64: 316 to 325
-  instructions for `fast_fp<double>`; g++ 13 with `probe_d`, `fast_fp` inlined: 374 to 390 on
-  x86_64 and 359 to 373 on arm64), and no Intel timing was possible: the i9 host was not
-  reachable when it was due.
+  The other rows (17 digits and fewer) are within the A/A spread: on the M4 -10.7% to +2.0%
+  against 199e0be in the same process (`stod` short 8.6 -> 8.7, 1-9 digit integers 4.5 -> 4.5, 17 digits
+  10.7 -> 10.8, `stof` short 9.4 -> 9.2; with `STRICT_STOX_C_LOCALE` -2.0% to +0.0%), and on the
+  i9 in separate binaries -2.5% to +3.1% (`stod` short 19.2 -> 19.1, 1-9 digit integers 12.2 ->
+  12.2, 17 digits 25.6 -> 25.2, 17 digits with any exponent 30.4 -> 31.4 with an A/A spread of
+  3%, `stof` short 22.6 -> 22.6).
 
-  Verification: `tools/fp_mutants.py` has 50 mutants (17 for this path); three of them
+  An earlier form of this change (`d611a3a`) passed the integer and fraction runs from
+  `fast_fp` to `fp_long`. That added two live values to `fast_fp`, its code changed on x86_64,
+  and the i9 measured several short rows 3% to 17% slower in the same process as 199e0be
+  (`stod` 1-9 digit integers 11.2 -> 12.9 ns, `1.5e-7`-like 27.4 -> 28.9, short with
+  `STRICT_STOX_C_LOCALE` 13.4 -> 14.7, the same in two runs) while the M4 showed nothing.
+  `fast_fp` was restored to the text of 199e0be. A same-process comparison of two copies
+  of the same code on the i9 is a matter of where each copy lands (the 199e0be copy measured
+  11.2 ns in that process and 12.2 as the only header of a binary), so the rows above are
+  compared in separate binaries. Defining `fp_long` after `fast_fp`, to give `fast_fp` the
+  neighbours it has in 199e0be, made no difference and is not done.
+
+  Verification: `tools/fp_mutants.py` has 51 mutants (18 for this path); three of them
   survived the existing tests and are now killed by two additions to `test/fp_test.cc`: a
   halfway point cut after 19 digits followed by the next digit and 0 to 23 zeros (a value just
   above the tie that only a non-zero digit at the start of an eight-byte group of zeros
@@ -140,20 +152,22 @@ release tags yet, so entries are dated.
   in the campaign tree) checks every text against libc `strtod`/`strtof` (bits, `errno`, end
   pointer, `idx`, the throwing form, in all four rounding modes), `std::from_chars`, `fast_float`
   and the previous header's `fast_fp` (same take or decline, same bits). On Linux arm64
-  (glibc 2.39, g++ 13): every positive float32 as shortest, `%.9g` and `%.17g` text (6.4G
-  texts, each read as `float` and as `double`), 4.7G texts around the exact midpoint of every
-  8th float32 (the midpoint, one unit below and above it, a 1 after 30 zeros, 40 trailing
-  zeros, cut at 17 to 21 digits), 83.7M of the same around random doubles (up to 770 digits),
-  1.7G random texts (100M in each of 17 formats: `%.17g`, `%.15g`, shortest, `%e`, fixed,
-  prices, integers, float texts, digit strings with any exponent, mantissas of 20 to 800 digits),
-  425M more in all four rounding modes, every string of up to 7 characters over `019-+ .eE`
+  (glibc 2.39, g++ 13), for 199e0be and the `d611a3a` form: every positive float32 as shortest,
+  `%.9g` and `%.17g` text (6.4G texts, each read as `float` and as `double`), 4.7G texts around the
+  exact midpoint of every 8th float32 (the midpoint, one unit below and above it, a 1 after 30
+  zeros, 40 trailing zeros, cut at 17 to 21 digits), 83.7M of the same around random doubles (up
+  to 770 digits), 1.7G random texts (100M in each of 17 formats: `%.17g`, `%.15g`, shortest, `%e`,
+  fixed, prices, integers, float texts, digit strings with any exponent, mantissas of 20 to 800
+  digits), 425M more in all four rounding modes, every string of up to 7 characters over `019-+ .eE`
   (5.4M) and the hard cases (Paxson, 2^-1074, `DBL_MAX`, the overflow midpoint, 800 digits,
-  exponents of 20 digits). On macOS arm64 15.8 (Apple libc, Apple clang): the same with
-  every 3rd float32 for the sweep (2.1G texts) and every 32nd for the midpoints (1.2G),
-  30M texts in each of the formats 0 to 14 and 60M in 15 and 16, 24M in the rounding modes,
-  and 41.8M double midpoints. Linux x86_64 (glibc 2.39, g++ 13) ran the same chain as Linux
-  arm64, macOS x86_64 15.7 the same as macOS arm64, and the Intel i9 (macOS 15.8, libc++ 23,
-  Apple libc) 1.5G random texts in the formats 0 to 14. The commit message of `d611a3a` said that
+  exponents of 20 digits). Linux x86_64 (glibc 2.39, g++ 13) ran the same chain; macOS arm64
+  15.8 and x86_64 15.7 (Apple libc) every 3rd float32 for the sweep (2.1G texts) and every 32nd
+  for the midpoints (1.2G), 30M texts in each of the formats 0 to 14 and 60M in 15 and 16, 24M in
+  the rounding modes, and 41.8M double midpoints; the Intel i9 (macOS 15.8, libc++ 23) 1.5G
+  random texts in the formats 0 to 14. For the final form (`fast_fp` unchanged, `fp_long` with
+  `memchr`), on Linux arm64: the chain of the long-text formats, 41.8M double midpoints and 1.2G
+  float32 midpoints against all four oracles, and 1.7G random texts and 9.5G midpoint texts
+  compared with 199e0be's `fast_fp` (0 differences). The commit message of `d611a3a` said that
   the full float32 sweeps ran on macOS arm64; they ran on Linux arm64 and x86_64, and the macOS
   runners took every 3rd float.
 
