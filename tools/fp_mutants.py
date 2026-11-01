@@ -173,7 +173,9 @@ MUTANTS = {
     "slow_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(b | (static_cast<bits_t>(neg) << top)));\n\treturn 1;", "out = std::bit_cast<R>(b);\n\treturn 1;"),
     "slow_zero_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(static_cast<bits_t>(neg) << top));", "out = std::bit_cast<R>(static_cast<bits_t>(0));"),
     "slow_errno": ("*errno_save = status == 2 ? ERANGE : 0;", "*errno_save = 0;"),
-    "slow_idx_on_range": ("\t\t\t\t} else if (status == 2) {\n\t\t\t\t\tout = static_cast<Out>(0);", "\t\t\t\t} else if (status == 2) {\n\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\tif (idx) { *idx = str.size(); }"),
+    "slow_idx_on_range": ("\t} else if (status == 2) {\n\t\tout = 0;\n\t}", "\t} else if (status == 2) {\n\t\tout = 0;\n\t\tif (idx != nullptr) { *idx = s.size(); }\n\t}"),
+    "slow_decline_idx": ("\tif (status == 1) {\n\t\tif (idx != nullptr) { *idx = s.size(); }\n\t} else if", "\tif (status == 1) {\n\t} else if"),
+    "slow_decline_zero": ("\t} else if (status == 2) {\n\t\tout = 0;\n\t}", "\t} else if (status == 2) {\n\t}"),
     "slow_no_throw": ("if (status == 2) { throw std::out_of_range(std::string(name) + \": Out of range value: \" + std::string(str)); }", "if (status == 2) { return fast; }"),
     # the big integers
     "slow_pow5_chunk": ("while (k >= 27) { mul(pow5_small.v[27]); k -= 27; }", "while (k >= 27) { mul(pow5_small.v[27]); k -= 26; }"),

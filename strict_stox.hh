@@ -1103,6 +1103,23 @@ inline int fp_slow(R& out, std::string_view s) noexcept {
 	return 1;
 }
 
+// What follows a declined fast_fp, out of line so that the code the short texts run (the wrapper around fast_fp) is small and as
+// it was: the exact path, then its result for the caller. 0: the strto* path decides; 1: out holds the value and idx the whole
+// text; 2: ERANGE (out is 0, idx untouched).
+template <typename R>
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+inline int fp_decline(R& out, std::string_view s, std::size_t* idx) noexcept {
+	const int status = fp_slow<R>(out, s);
+	if (status == 1) {
+		if (idx != nullptr) { *idx = s.size(); }
+	} else if (status == 2) {
+		out = 0;
+	}
+	return status;
+}
+
 
 }  // namespace strict_stox_detail
 
@@ -1214,14 +1231,8 @@ class Stox {
 					if (idx) { *idx = str.size(); }
 					return 1;
 				}
-				const int status = strict_stox_detail::fp_slow<R>(r, str);
-				if (status == 1) {
-					out = static_cast<Out>(r);
-					if (idx) { *idx = str.size(); }
-				} else if (status == 2) {
-					out = static_cast<Out>(0);
-				}
-				return status;
+				static_assert(std::is_same_v<Out, R>);
+				return strict_stox_detail::fp_decline<R>(out, str, idx);
 			}
 		}
 		return 0;
