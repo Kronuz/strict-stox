@@ -93,35 +93,39 @@ program that never leaves the `"C"` locale can skip the question with
 `-DSTRICT_STOX_C_LOCALE` (CMake: `-DSTRICT_STOX_C_LOCALE=ON`): plain decimals are then
 read with `.` in every locale. Both columns are below.
 
-Floating point, ns per element, best of 9 under `quiet strict`, `-O3`, Apple clang 17
-(measured 2026-10-31; repeating the run moves a cell by at most 4%, and `fast_float`
-moves by up to 10% between builds, so its best result is shown). "before" is the
-Clinger-only fast path at `6d8731f` (17 digit doubles went to `strtod`).
+Floating point, ns per element, best of 9 under `quiet strict`, `-O3`, Apple clang 17.
+Each Apple M4 Pro cell is the mean of four runs, which differ by at most 3%; each Intel
+cell is one run. `fast_float` moves by up to 10% between builds, so its best result is
+shown. The C locale column skips the decimal point query (above).
 
-| workload | before | now | now, C locale | `fast_float` |
-|---|---|---|---|---|
-| **Apple M4 Pro** | | | | |
-| `stod`, short (`12345.678`) | 10.4 | 8.9 | **6.0** | 7.7 |
-| `stod`, 17 digits (`%.17g`) | 23.5 | 10.9 | **7.6** | 11.0 |
-| `stod`, shortest repr (JSON) | 24.2 | 12.4 | **9.4** | 10.3 |
-| `stof`, short | 22.8 | 9.8 | **7.5** | 10.1 |
-| `stof`, 9 digits | 17.1 | **7.2** | **6.3** | 7.6 |
-| **Intel i9-9980HK** | | | | |
-| `stod`, short | 28.6 | 18.4 | **13.7** | 15.6 |
-| `stod`, 17 digits | 47.2 | 24.9 | **19.2** | 22.5 |
-| `stod`, shortest repr (JSON) | 59.4 | 33.7 | **23.6** | 27.1 |
-| `stof`, short | 46.7 | 22.7 | **16.7** | 19.2 |
-| `stof`, 9 digits | 36.3 | 21.2 | **16.5** | 16.6 |
+| workload | strict-stox | C locale | `fast_float` |
+|---|---|---|---|
+| **Apple M4 Pro** (`d611a3a`) | | | |
+| `stod`, short (`12345.678`) | 8.5 | **5.9** | 7.4 |
+| `stod`, 17 digits (`%.17g`) | 10.8 | **7.3** | 10.4 |
+| `stod`, shortest repr (JSON) | 10.7 | **8.1** | 10.4 |
+| `stod`, 25-40 digits | 18.8 | **16.9** | 29.5 |
+| `stod`, 100 digits | 26.8 | **25.1** | 37.3 |
+| `stod`, 800 digits | 131 | **129** | 131 |
+| `stof`, short | 9.4 | **7.5** | 9.8 |
+| `stof`, 9 digits | 6.7 | **5.7** | 7.6 |
+| `stof`, 25-40 digits | 21.8 | **20.0** | 29.2 |
+| **Intel i9-9980HK** (`199e0be`) | | | |
+| `stod`, short | 18.4 | **13.7** | 15.6 |
+| `stod`, 17 digits | 24.9 | **19.2** | 22.5 |
+| `stod`, shortest repr (JSON) | 33.7 | **23.6** | 27.1 |
+| `stof`, short | 22.7 | **16.7** | 19.2 |
+| `stof`, 9 digits | 21.2 | **16.5** | 16.6 |
 
 Integers, Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
-(median of five runs under `quiet strict` at `6d8731f`; each run is the best of 7
-samples over a pool of 1024 inputs):
+(mean of four runs under `quiet strict` at `d611a3a`, which differ by at most 5%; each run
+is the best of 9 samples over a pool of 1024 inputs):
 
 | workload | strict-stox | `std::from_chars` |
 |---|---|---|
-| `stoi`, 1-9 digits | 5.9 | 7.1 (`absl::SimpleAtoi` 5.9) |
-| `stoull`, 1-19 digits | 5.8 | 8.7 |
-| `stoul`, base 16 | 4.7 | 11.0 |
+| `stoi`, 1-9 digits | 6.0 | 7.4 |
+| `stoull`, 1-19 digits | 6.5 | 8.9 |
+| `stoul`, base 16 | 5.2 | 10.8 |
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \
@@ -129,12 +133,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON \
 cmake --build build && ./build/strict_stox_bench
 ```
 
-The `absl::SimpleAtoi` figure appears when abseil is installed, and the `fast_float`
-figures need `-DHAVE_FAST_FLOAT` and its include path. The runs agree within 5%,
-except one `stoull` run (6.9). The floating point rows above come from
+The `absl` column appears when abseil is installed, and the `fast_float` ones need
+`-DHAVE_FAST_FLOAT` and its include path. The floating point rows above come from
 `./build/strict_stox_bench fp` (the CMake build finds `fast_float` with
 `-DSTRICT_STOX_FAST_FLOAT_DIR=/path/to/fast_float/include`); `-DHAVE_PREV` adds the
-"before" column from a saved older header (see `bench/bench.cc`).
+"before" column from a saved older header (see `bench/bench.cc`). The `fast%` column is
+the share of a row's inputs that the fast path takes: a row whose inputs mostly go to
+`strtod` measures `strtod`.
 
 [CHANGELOG.md](CHANGELOG.md) has the timings before each change.
 

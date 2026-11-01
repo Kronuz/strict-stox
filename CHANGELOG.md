@@ -108,16 +108,25 @@ release tags yet, so entries are dated.
   at a time. Results are unchanged: for every text of the tests below, the new and the
   old `fast_fp` take or decline the text alike and return the same bits.
 
-  Apple M4 Pro, Apple clang 17 `-O3`, `quiet strict`, ns per element, same process
-  (best of 9; each cell is the mean of two runs that differ by at most 3%; the other rows,
-  17 digits and shorter, differ from 199e0be by less than the A/A spread of about 5%):
+  Apple M4 Pro, Apple clang 17 `-O3`, `quiet strict`, ns per element, `bench/bench.cc` with
+  199e0be as "before" in the same process (mean of four runs of best of 9, which differ by at
+  most 3%; `fast_float` best result):
 
   | workload | 199e0be | now | `fast_float` |
   |---|---|---|---|
-  | `stod`, 25-40 digits | 55.2 | 18.7 | 30.1 |
-  | `stod`, 100 digits | 173.3 | 26.7 | 38.9 |
-  | `stod`, 800 digits | 1,357 | 131 | 135 |
-  | `stof`, 25-40 digits | 59.4 | 22.2 | 29.6 |
+  | `stod`, 25-40 digits | 55.7 | 18.8 | 29.5 |
+  | `stod`, 100 digits | 172.7 | 26.8 | 37.3 |
+  | `stod`, 800 digits | 1,344 | 131 | 131 |
+  | `stof`, 25-40 digits | 58.9 | 21.8 | 29.2 |
+
+  The other rows (17 digits and fewer) change by -11% to +1.7%: `stod` short 8.5 -> 8.5,
+  17 digits 10.7 -> 10.8, 17 digits with any exponent 12.1 -> 11.4, shortest repr 12.0 -> 10.7,
+  `stof` short 9.5 -> 9.4; with `STRICT_STOX_C_LOCALE` `stod` short 5.8 -> 5.9, 17 digits
+  7.3 -> 7.3, `stof` short 7.5 -> 7.5. The A/A spread of those rows is 1% to 5%.
+  The generated code of `fast_fp` is not identical to 199e0be's (clang 20 on x86_64: 316 to 325
+  instructions for `fast_fp<double>`; g++ 13 with `probe_d`, `fast_fp` inlined: 374 to 390 on
+  x86_64 and 359 to 373 on arm64), and no Intel timing was possible: the i9 host was not
+  reachable when it was due.
 
   Verification: `tools/fp_mutants.py` has 50 mutants (17 for this path); three of them
   survived the existing tests and are now killed by two additions to `test/fp_test.cc`: a
@@ -126,6 +135,25 @@ release tags yet, so entries are dated.
   reveals), and a floor of 99.5% on the share of in-range 20 to 40 digit text that the fast
   path takes (a reader with a window of 18 digits, or that counts leading zeros as
   digits, declines more, which no correctness test can see; the share is 99.7% to 100%).
+
+  Long runs, all with 0 mismatches: a harness outside the repository (`campaign/audit/stox-fixround`
+  in the campaign tree) checks every text against libc `strtod`/`strtof` (bits, `errno`, end
+  pointer, `idx`, the throwing form, in all four rounding modes), `std::from_chars`, `fast_float`
+  and the previous header's `fast_fp` (same take or decline, same bits). On Linux arm64
+  (glibc 2.39, g++ 13): every positive float32 as shortest, `%.9g` and `%.17g` text (6.4G
+  texts, each read as `float` and as `double`), 4.7G texts around the exact midpoint of every
+  8th float32 (the midpoint, one unit below and above it, a 1 after 30 zeros, 40 trailing
+  zeros, cut at 17 to 21 digits), 83.7M of the same around random doubles (up to 770 digits),
+  1.7G random texts (100M in each of 17 formats: `%.17g`, `%.15g`, shortest, `%e`, fixed,
+  prices, integers, float texts, digit strings with any exponent, mantissas of 20 to 800 digits),
+  425M more in all four rounding modes, every string of up to 7 characters over `019-+ .eE`
+  (5.4M) and the hard cases (Paxson, 2^-1074, `DBL_MAX`, the overflow midpoint, 800 digits,
+  exponents of 20 digits). On macOS arm64 15.8 (Apple libc, Apple clang): the same with
+  every 3rd float32 for the sweep (2.1G texts) and every 32nd for the midpoints (1.2G),
+  30M texts in each of the formats 0 to 14 and 60M in 15 and 16, 24M in the rounding modes,
+  and 41.8M double midpoints. The commit message of `d611a3a` said that the full float32
+  sweeps ran on macOS arm64; they ran on Linux arm64, and the macOS runner took every 3rd float.
+
 - **Input of any length parses.** The wrapper copied the text into a 64-byte
   buffer, and a later check treated the cut as trailing junk. Valid input of 64
   bytes or more (100 leading zeros, long whitespace, a long decimal string) was
@@ -143,6 +171,16 @@ release tags yet, so entries are dated.
 - `test/long_test.cc` is portable to libstdc++ 11 and GCC: it compares
   `long double` by value, skips `std::from_chars` on text over 400 bytes, and
   includes the headers the frozen old header needs.
+
+### Known issues
+
+- **Apple's libc aborts in `strtod` on some valid text.** On macOS 15.7, 15.8 and 26.7,
+  `strtod("99004559013337762701442583720290300000000000.00000000000000")` fails an
+  assertion (`divideMPByMP`, `strtofp.c:1390`) and kills the process; `strtof` is fine.
+  Random digit strings and long mantissas trigger it about once in 2 million texts (29 in
+  60M, the same 29 on x86_64 and arm64). `strict_stod` takes this text on the fast path and
+  returns its value, so it does not abort; a text that the fast path declines goes to
+  `strtod` and can. The previous header called `strtod` for every text of more than 17 bytes.
 
 ## 2026-10-30
 
