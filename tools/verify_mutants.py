@@ -4,9 +4,10 @@
 For each mutant of tools/fp_mutants.py: build verify.cc against the mutated header and run
 hard, syntax (length 5), dmid (20k) and rand (150k per format, no cross oracles), stopping at the
 first command that reports a mismatch. A mutant the harness does not kill is listed. The ones
-that only make the reader decline more (the text then goes to libc, which is right) and the locale
-mutants (the harness never changes the locale) are expected to survive: test/fp_test.cc,
-test/locale_test.cc and test/slow_test.cc kill those.
+that only make the reader decline more (the text then goes to libc, which is right), the locale
+mutants (the harness never changes the locale) and the mutants of the route of a text and of the
+integer range (slow_start_*, int_range_*: the harness checks values, and these change which function
+decides) are expected to survive: test/fp_test.cc, test/locale_test.cc and test/slow_test.cc kill those.
 
 usage: tools/verify_mutants.py TREE CXX WORKDIR [JOBS] [only-name ...]
 """

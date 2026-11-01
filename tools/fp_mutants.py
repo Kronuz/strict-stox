@@ -187,7 +187,28 @@ MUTANTS = {
     "slow_short_q": ("\t\tnd = digits10(wall);\n\t\tq -= static_cast<std::ptrdiff_t>(fe - fb);", "\t\tnd = digits10(wall);"),
     "slow_short_limit": ("if (nall <= 19) {", "if (nall <= 20) {"),
     "slow_short_digits": ("if (have_dg) { X.from_digits(dg, nd); } else { X.set(w); }", "X.from_digits(dg, nd);"),
+    # ---- the integer range and the first byte route (the API, not the harness: verify.cc does not call them) ----
+    # an integer out of range: the status, the value, idx, and that strto* is not called for it (test/slow_test.cc)
+    "int_range_value": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }",
+                        "if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { out = 1; return 1; }"),
+    "int_range_add": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }",
+                      "if (__builtin_mul_overflow(acc, ub, &acc)) { return 2; } acc += d;"),
+    "int_range_limit": ("if (neg ? acc > lim + 1 : acc > lim) { return 2; }", "if (neg ? acc > lim + 2 : acc > lim) { return 2; }"),
+    "int_range_idx": ("\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\tif (idx) { *idx = str.size(); }\n\t\t\t\t\treturn 2;"),
+    "int_range_zero": ("\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\tout = static_cast<Out>(1);\n\t\t\t\t\treturn 2;"),
+    "int_range_declined": ("\t\t\t\t\tif (status == 0) { return 0; }\n\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\treturn 0;"),
+    # the first byte of a text that is not decimal: routed to strto*; a decimal text must not be
+    "slow_start_no_dot": ("return c - '0' <= 9 || c == '.';", "return c - '0' <= 9;"),
+    "slow_start_no_sign": ("\tif (c == '-') {\n\t\tif (n == 1) { return false; }\n\t\tc = static_cast<unsigned char>(p[1]);\n\t}\n", ""),
+    "slow_start_sign_dot": ("c = static_cast<unsigned char>(p[1]);\n\t}\n\treturn c - '0' <= 9 || c == '.';", "c = static_cast<unsigned char>(p[1]);\n\t\treturn c - '0' <= 9;\n\t}\n\treturn c - '0' <= 9 || c == '.';"),
+    "slow_start_digit_top": ("return c - '0' <= 9 || c == '.';", "return c - '0' < 9 || c == '.';"),
+    "slow_start_always": ("return c - '0' <= 9 || c == '.';", "return true;"),
+    # an integer of at most 19 digits: one conversion of a 64 bit integer (fp_test)
+    "int_tie_truncate": ("b = std::bit_cast<bits_t>(static_cast<double>(w));", "b = std::bit_cast<bits_t>(static_cast<double>(w & ~1ULL));"),
+    "int_tie_exponent": ("} else if (q == 0) {", "} else if (q <= 0) {"),
+    "int_tie_declined": ("} else if (q == 0) {", "} else if (false) {"),
 }
+
 
 # The tests every mutant is built against: name -> (source, extra flags).
 TESTS = {
@@ -196,7 +217,8 @@ TESTS = {
     "locale_mock_test": ("locale_test.cc", ["-DLOCALE_TEST_MOCK=1"]),
     "slow_test": ("slow_test.cc", ["-DSTRICT_STOX_COUNT_LIBC=1"]),
 }
-# Mutants that one named test has to kill by itself. The mutants of the exact path (slow_*) are killed by slow_test unless named here.
+# Mutants that one named test has to kill by itself. The mutants of the exact path and of the route of a text (slow_*) and of the
+# integer range (int_range_*) are killed by slow_test unless named here.
 REQUIRED_KILLER = {
     "no_rounding_guard": "rounding_test",
     "rounding_guard_neg_only": "rounding_test",
@@ -206,7 +228,7 @@ REQUIRED_KILLER = {
     "slow_no_locale_guard": "locale_mock_test",
 }
 for _name in MUTANTS:
-    if _name.startswith("slow_"):
+    if _name.startswith("slow_") or _name.startswith("int_range_"):
         REQUIRED_KILLER.setdefault(_name, "slow_test")
 # A mutant that never returns (a loop without an exit) is as dead as one that fails.
 RUN_TIMEOUT = 300

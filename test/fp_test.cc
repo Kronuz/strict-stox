@@ -606,8 +606,27 @@ static void long_acceptance(std::uint64_t seed) {
 }
 
 // --- Modes. ---
+// An integer of at most 19 digits is one correctly rounded conversion of a 64 bit integer, so the fast path takes every exact halfway point
+// of the doubles from 2^53 to 2^63 (and the integers next to it) instead of declining it, with libc's result.
+static void integer_ties_taken() {
+	std::mt19937_64 rng(77);
+	Stats st;
+	for (int e = 1; e <= 10; ++e) {
+		for (int i = 0; i < 60; ++i) {
+			const std::uint64_t m = (1ULL << 52) + (i == 0 ? 0 : i == 1 ? (1ULL << 52) - 1 : rng() % (1ULL << 52));
+			const std::uint64_t v = (2 * m + 1) << (e - 1);  // halfway between m 2^e and (m + 1) 2^e
+			for (const std::uint64_t x : {v, v - 1, v + 1}) {
+				check_fast<double>(std::to_string(x), st);
+				check_fast<double>("-" + std::to_string(x), st);
+			}
+		}
+	}
+	if (st.accepted != st.checks) { FAIL("integer halfway points: the fast path took %ld of %ld", st.accepted, st.checks); }
+}
+
 static void quick(std::uint64_t seed) {
 	check_table();
+	integer_ties_taken();
 	Stats sd, sf;
 	for (const char* h : hard) { check_text(h, sd, sf, true); }
 	std::mt19937_64 rng(seed);
