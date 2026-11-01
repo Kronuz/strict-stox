@@ -127,6 +127,34 @@ static void int_rows(std::mt19937_64& rng) {
 	}
 }
 
+// Integer text the fast path declines or that fails: leading white space, a sign, a prefix, a base of 0, no digits at all
+// and a value out of range. These rows pay for the attempt (the fast path) on top of strto*, so they are the ones a
+// regression shows on first.
+static void int_edge_rows(std::mt19937_64& rng) {
+	struct K { const char* name; int kind; int base; };
+	for (K k : {K{"stoll \" 42\" (white space)", 0, 10}, K{"stoll \"+42\"", 1, 10}, K{"stoll \"42\", base 0", 2, 0},
+	            K{"stoll \"0x1f\", base 16", 3, 16}, K{"stoll \"abc\" (EINVAL)", 4, 10}, K{"stoll 20 digits (ERANGE)", 5, 10}}) {
+		Pool v;
+		for (int i = 0; i < 1024; ++i) {
+			const std::string d = std::to_string(1 + rng() % 999999);
+			switch (k.kind) {
+				case 0: v.push_back(" " + d); break;
+				case 1: v.push_back("+" + d); break;
+				case 2: v.push_back(d); break;
+				case 3: v.push_back("0x" + d); break;
+				case 4: v.push_back("abc" + d); break;
+				default: v.push_back(std::to_string(9 + rng() % 1) + "9999999999999999999"); break;
+			}
+		}
+		int e;
+		const int base = k.base;
+		const double o = run<long long>(v, [&](const std::string& s) { return old::strict_stoll(&e, s, nullptr, base); });
+		const double n = run<long long>(v, [&](const std::string& s) { return strict_stoll(&e, s, nullptr, base); });
+		const double n2 = run<long long>(v, [&](const std::string& s) { return strict_stoll(&e, s, nullptr, base); });
+		row(k.name, o, 0, n, n2, 0, 0, 0);
+	}
+}
+
 static std::string to_s(double d, const char* f) {
 	char b[64];
 	std::snprintf(b, sizeof b, f, d);
@@ -169,7 +197,10 @@ int main(int argc, char** argv) {
 	std::mt19937_64 rng(5);
 	const bool ints = argc < 2 || std::strcmp(argv[1], "fp") != 0;
 	header();
-	if (ints) { int_rows(rng); }
+	if (ints) {
+		int_rows(rng);
+		int_edge_rows(rng);
+	}
 	Pool v;
 	auto fill = [&](auto gen) { v.clear(); for (int i = 0; i < 1024; ++i) { v.push_back(gen()); } return v; };
 	fp_row<double>("stod 1.234-like (short)", fill([&] { return std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
@@ -203,6 +234,13 @@ int main(int argc, char** argv) {
 	fp_row<float>("stof 1.234-like (short)", fill([&] { return std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
 	fp_row<float>("stof 9 digits", fill([&] { return to_s(static_cast<float>(static_cast<double>(rng() % 100000000) / 7.0), "%.9g"); }));
 	fp_row<float>("stof 25-40 digits", fill(digits(25, 40)));
+	// Text that never takes the fast path (white space, inf, nan) or sits at the top of the range.
+	fp_row<double>("stod \" 1.5\" (white space)", fill([&] { return " " + std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
+	fp_row<double>("stod inf, nan", fill([&] { static const char* t[] = {"inf", "-inf", "infinity", "nan", "-nan"}; return std::string(t[rng() % 5]); }));
+	fp_row<double>("stod near DBL_MAX", fill([&] { return "1.797693134862315" + std::to_string(rng() % 8) + "e308"; }));
+	fp_row<float>("stof \" 1.5\" (white space)", fill([&] { return " " + std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
+	fp_row<float>("stof inf, nan", fill([&] { static const char* t[] = {"inf", "-inf", "infinity", "nan", "-nan"}; return std::string(t[rng() % 5]); }));
+	fp_row<float>("stof near FLT_MAX", fill([&] { return "3.40282" + std::to_string(rng() % 4) + "e38"; }));
 	// Texts the 64-bit table cannot decide (exact halfway points) and the ones libc answers with ERANGE (subnormal, overflow,
 	// underflow): the exact path, with no libc call.
 	fp_row<double>("stod exact ties 2^52..2^53 + .5", fill([&] { return std::to_string((1ULL << 52) + rng() % (1ULL << 52)) + ".5"; }));

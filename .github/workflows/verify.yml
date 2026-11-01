@@ -1,0 +1,66 @@
+name: Verify
+# Long verification runs, started by hand (they take hours): the independent harness tools/verify.cc on
+# four platforms, and the mutation check tools/fp_mutants.py. docs/perf/verification.md records the results.
+on:
+  workflow_dispatch:
+    inputs:
+      fast_float:
+        description: "fast_float revision the harness compares with"
+        default: "6a3fabc"
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, tag: linux-x86_64, threads: 4, flags: '-DHAVE_FROM_CHARS -DHAVE_TO_CHARS', fc: 40, rand: 6000000, modes: 2000000, f32: 64, f32mid: 512, dmid: 1000000}
+          - {os: ubuntu-24.04-arm, tag: linux-arm64, threads: 4, flags: '-DHAVE_FROM_CHARS -DHAVE_TO_CHARS', fc: 40, rand: 6000000, modes: 2000000, f32: 64, f32mid: 512, dmid: 1000000}
+          - {os: macos-15, tag: macos-arm64, threads: 3, flags: '', fc: 40, rand: 3000000, modes: 1000000, f32: 128, f32mid: 1024, dmid: 500000}
+          - {os: macos-15-intel, tag: macos-x86_64, threads: 4, flags: '', fc: 40, rand: 3000000, modes: 1000000, f32: 128, f32mid: 1024, dmid: 500000}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+      - name: fast_float
+        run: |
+          git clone -q https://github.com/fastfloat/fast_float.git ff
+          git -C ff checkout -q ${{ inputs.fast_float }}
+      - name: build
+        run: |
+          c++ --version | head -1
+          c++ -std=c++20 -O2 -Wno-ignored-attributes -I. -Iff/include -DHAVE_FAST_FLOAT -DSTRICT_STOX_COUNT_LIBC=1 ${{ matrix.flags }} tools/verify.cc -o verify -pthread
+      - name: slow_test
+        run: |
+          c++ -std=c++20 -O2 -Wno-ignored-attributes -DSTRICT_STOX_COUNT_LIBC=1 -Itest -I. test/slow_test.cc -o slow_test -pthread
+          ./slow_test
+      - name: chain
+        run: sh tools/verify_chain.sh ./verify out ${{ matrix.threads }} ${{ matrix.rand }} ${{ matrix.modes }} ${{ matrix.f32 }} ${{ matrix.f32mid }} ${{ matrix.dmid }} --fc-max ${{ matrix.fc }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-${{ matrix.tag }}
+          path: out
+  mutants:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: slow, patterns: 'slow_*'}
+          - {name: a-l, patterns: '[a-l]*'}
+          - {name: m-z, patterns: '[m-z]* !slow_*'}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+      - name: mutants
+        run: |
+          g++ --version | head -1
+          set -f
+          python3 tools/fp_mutants.py . g++ ${{ matrix.patterns }} 2>&1 | tee mutants-${{ matrix.name }}.log
+          test "${PIPESTATUS[0]}" = 0
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-${{ matrix.name }}
+          path: mutants-${{ matrix.name }}.log

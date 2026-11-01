@@ -102,6 +102,22 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_test(NAME strict_stox_pow5_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_pow5.py --check)
   endif()
 
+  # The independent harness (tools/verify.cc). Its long sweeps are run by hand (tools/verify_chain.sh,
+  # .github/workflows/verify.yml); with the option on, ctest runs its hard cases and the short syntax
+  # strings, which keeps the program building and its checks working.
+  option(STRICT_STOX_BUILD_VERIFY "Build tools/verify.cc and two quick runs of it" OFF)
+  if(STRICT_STOX_BUILD_VERIFY)
+    add_executable(strict_stox_verify tools/verify.cc)
+    target_compile_definitions(strict_stox_verify PRIVATE STRICT_STOX_COUNT_LIBC=1)
+    target_compile_options(strict_stox_verify PRIVATE -Wno-ignored-attributes)
+    target_link_libraries(strict_stox_verify PRIVATE strict_stox)
+    if(Threads_FOUND)
+      target_link_libraries(strict_stox_verify PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME strict_stox_verify_hard COMMAND strict_stox_verify hard -t 2)
+    add_test(NAME strict_stox_verify_syntax COMMAND strict_stox_verify syntax -n 4 -t 2)
+  endif()
+
   # Benchmark (not run by ctest). Comparators (std::from_chars, optionally
   # abseil and fast_float when installed) are only linked by this target.
   # fast_float: -DSTRICT_STOX_FAST_FLOAT_DIR=<dir containing fast_float/fast_float.h>

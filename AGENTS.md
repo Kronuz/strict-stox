@@ -20,7 +20,12 @@ test/oracle.hh               libc strtod/strtof and the public API in the strict
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
 tools/slow_cases.py          Expected results for the curated texts of test/slow_test.cc by exact rational arithmetic (round half to even): value bits, or ERANGE, or "libc decides".
 tools/fp_mutants.py          Breaks the fast and exact paths in 112 ways and requires the floating point tests to fail on each; the rounding, locale and exact path (slow_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
-bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH).
+tools/verify.cc              Independent sweep of stod/stof against libc, std::from_chars, fast_float and the previous header (hard cases, halfway points, every float32, random text, rounding modes; own big integer and generators). Hours; not in ctest.
+tools/verify_chain.sh        The commands of verify.cc in sequence, one log each, at nice 19.
+tools/verify_mutants.py      Builds verify.cc against each mutant of fp_mutants.py and requires it to fail (except the decline-more and locale mutants, which only the repo's tests kill).
+.github/workflows/verify.yml The sweeps on four platforms and the mutation check on three shards, started by hand (workflow_dispatch).
+docs/perf/verification.md    What has run through verify.cc and fp_mutants.py, on which platforms, with the libc defects found.
+bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH); rows for declined and error input and for the exact path.
 CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_slow`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                 Behavior and performance changes, dated.
