@@ -151,8 +151,11 @@ release tags yet, so entries are dated.
   exponents of 20 digits). On macOS arm64 15.8 (Apple libc, Apple clang): the same with
   every 3rd float32 for the sweep (2.1G texts) and every 32nd for the midpoints (1.2G),
   30M texts in each of the formats 0 to 14 and 60M in 15 and 16, 24M in the rounding modes,
-  and 41.8M double midpoints. The commit message of `d611a3a` said that the full float32
-  sweeps ran on macOS arm64; they ran on Linux arm64, and the macOS runner took every 3rd float.
+  and 41.8M double midpoints. Linux x86_64 (glibc 2.39, g++ 13) ran the same chain as Linux
+  arm64, macOS x86_64 15.7 the same as macOS arm64, and the Intel i9 (macOS 15.8, libc++ 23,
+  Apple libc) 1.5G random texts in the formats 0 to 14. The commit message of `d611a3a` said that
+  the full float32 sweeps ran on macOS arm64; they ran on Linux arm64 and x86_64, and the macOS
+  runners took every 3rd float.
 
 - **Input of any length parses.** The wrapper copied the text into a 64-byte
   buffer, and a later check treated the cut as trailing junk. Valid input of 64
