@@ -203,5 +203,14 @@ int main(int argc, char** argv) {
 	fp_row<float>("stof 1.234-like (short)", fill([&] { return std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
 	fp_row<float>("stof 9 digits", fill([&] { return to_s(static_cast<float>(static_cast<double>(rng() % 100000000) / 7.0), "%.9g"); }));
 	fp_row<float>("stof 25-40 digits", fill(digits(25, 40)));
+	// Texts the 64-bit table cannot decide (exact halfway points) and the ones libc answers with ERANGE (subnormal, overflow,
+	// underflow): the exact path, with no libc call.
+	fp_row<double>("stod exact ties 2^52..2^53 + .5", fill([&] { return std::to_string((1ULL << 52) + rng() % (1ULL << 52)) + ".5"; }));
+	fp_row<double>("stod odd integers 2^53..2^54 (ties)", fill([&] { return std::to_string((1ULL << 53) + 2 * (rng() % (1ULL << 52)) + 1); }));
+	fp_row<double>("stod subnormal (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e-" + std::to_string(310 + rng() % 13); }));
+	fp_row<double>("stod overflow, underflow (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e" + (rng() & 1 ? "" : "-") + std::to_string(325 + rng() % 40); }));
+	fp_row<float>("stof odd integers 2^24..2^25 (ties)", fill([&] { return std::to_string((1ULL << 24) + 2 * (rng() % (1ULL << 23)) + 1); }));
+	fp_row<float>("stof subnormal (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e-" + std::to_string(40 + rng() % 5); }));
+	fp_row<float>("stof overflow (ERANGE)", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 10000) + "e" + std::to_string(39 + rng() % 7); }));
 	return 0;
 }

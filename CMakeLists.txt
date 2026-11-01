@@ -68,6 +68,16 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   endif()
   add_test(NAME strict_stox_rounding COMMAND strict_stox_rounding_test)
 
+  # The exact decimal path: stod/stof reach libc only for what they cannot decide (hex, inf, nan,
+  # directed rounding, exact subnormals, ...). The test counts the calls that reach libc through the
+  # STRICT_STOX_COUNT_LIBC seam, and checks exact halfway points, the text Apple's strtod aborts on, and
+  # random texts against libc.
+  add_executable(strict_stox_slow_test test/slow_test.cc)
+  target_include_directories(strict_stox_slow_test PRIVATE test)
+  target_compile_definitions(strict_stox_slow_test PRIVATE STRICT_STOX_COUNT_LIBC=1)
+  target_link_libraries(strict_stox_slow_test PRIVATE strict_stox)
+  add_test(NAME strict_stox_slow COMMAND strict_stox_slow_test)
+
   # The locale guard. The mock build overrides the decimal point the header sees (no installed locale
   # needed); the real build runs where a comma locale is installed (STRICT_STOX_TEST_LOCALE names one) and
   # says so when it skips. The C_LOCALE build checks the documented opt-out.

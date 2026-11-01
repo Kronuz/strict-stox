@@ -7,8 +7,10 @@ test/locale_test.cc) and require that at least one FAILS. A mutant that survives
 would not catch that bug. Some mutants name the test that has to kill them (REQUIRED_KILLER): the
 locale guard must not depend on an installed comma locale, which fp_test uses when there is one.
 
-usage: tools/fp_mutants.py TREE_DIR [CXX] [only-name ...]     (scratch dir: $MUT_DIR or a temp dir)
+usage: tools/fp_mutants.py TREE_DIR [CXX] [pattern ...]     (scratch dir: $MUT_DIR or a temp dir)
+patterns select mutants by name (shell patterns: slow_*); a pattern starting with ! excludes (!slow_*).
 """
+import fnmatch
 import os
 import subprocess
 import sys
@@ -17,7 +19,16 @@ import tempfile
 
 tree = os.path.abspath(sys.argv[1])
 cxx = sys.argv[2] if len(sys.argv) > 2 else "g++"
-only = set(sys.argv[3:])
+only = sys.argv[3:]
+
+
+def selected(name):
+    include = [p for p in only if not p.startswith("!")]
+    exclude = [p[1:] for p in only if p.startswith("!")]
+    if include and not any(fnmatch.fnmatch(name, p) for p in include):
+        return False
+    return not any(fnmatch.fnmatch(name, p) for p in exclude)
+
 src = open(os.path.join(tree, "strict_stox.hh"), encoding="utf-8").read()
 
 MUTANTS = {
@@ -102,6 +113,78 @@ MUTANTS = {
     "exp_overflow": ("ex = ex < 100000 ? ex * 10 + static_cast<std::ptrdiff_t>(d) : std::numeric_limits<std::ptrdiff_t>::max() / 4;", "ex = ex * 10 + static_cast<std::ptrdiff_t>(d);"),
     # a clamped exponent kept instead of poisoned (the 7-digit exponent case)
     "exp_clamp": ("ex = ex < 100000 ? ex * 10 + static_cast<std::ptrdiff_t>(d) : std::numeric_limits<std::ptrdiff_t>::max() / 4;", "ex = ex < 100000 ? ex * 10 + static_cast<std::ptrdiff_t>(d) : ex;"),
+
+    # ---- the exact path (fp_slow and Big): test/slow_test.cc has to kill each of these by itself ----
+    # the digits: the sticky digit for what follows the first 768, the cap, the point, leading zeros
+    "slow_no_sticky": ("\t\tif (sticky) {\n\t\t\tdg[nd++] = 1;\n\t\t\t--q;\n\t\t}\n", ""),
+    "slow_digit_cap": ("inline constexpr int slow_digits = 768;", "inline constexpr int slow_digits = 700;"),
+    "slow_sticky_frac": ("sticky = sticky || (nf > tf && any_nonzero(fb + tf, fe));", "sticky = sticky;"),
+    "slow_sticky_zero": ("sticky = nf > tf && any_nonzero(b + tf, fe);", "sticky = false;"),
+    "slow_leading_zeros": ("q -= static_cast<std::ptrdiff_t>(static_cast<std::size_t>(b - fb) + tf);", "q -= static_cast<std::ptrdiff_t>(tf);"),
+    "slow_frac_digits": ("\t\t\ttake(fb, tf);\n\t\t\tq -= static_cast<std::ptrdiff_t>(tf);", "\t\t\ttake(fb, tf);"),
+    # the syntax it accepts: it must decline what is not plain decimal text
+    "slow_no_digits": ("\tif (ie == ib && fb == fe) { return 0; }\n\tstd::ptrdiff_t q = 0;", "\tstd::ptrdiff_t q = 0;"),
+    "slow_exp_empty": ("\t\tif (++p == e) { return 0; }\n\t\tconst bool eneg", "\t\t++p;\n\t\tconst bool eneg"),
+    "slow_exp_sign_empty": ("if ((eneg || *p == '+') && ++p == e) { return 0; }", "if (eneg || *p == '+') { ++p; }"),
+    "slow_exp_junk": ("\t\t\tif (d > 9) { return 0; }\n\t\t\tif (q < 1000000000000000LL)", "\t\t\tif (d > 9) { break; }\n\t\t\tif (q < 1000000000000000LL)"),
+    "slow_mant_junk": ("\t\tif ((static_cast<unsigned char>(*p) | 0x20) != 'e') { return 0; }\n\t\tif (++p == e) { return 0; }", "\t\tif (++p == e) { return 0; }"),
+    "slow_exp_neg": ("\t\tif (eneg) { q = -q; }\n\t}\n\tif (!rounds_to_nearest()) { return 0; }", "\t}\n\tif (!rounds_to_nearest()) { return 0; }"),
+    # the guards
+    "slow_no_rounding_guard": ("\tif (!rounds_to_nearest()) { return 0; }\n", ""),
+    "slow_no_locale_guard": ("\tif (dot && !decimal_point_is_dot()) { return 0; }\n\n\t// The significant digits", "\n\t// The significant digits"),
+    # the screening of what is certainly infinity or zero
+    "slow_no_screen_hi": ("if (lg - 1 >= tr::dec_hi || lg <= tr::dec_lo) { return 2; }", "if (lg <= tr::dec_lo) { return 2; }"),
+    "slow_no_screen_lo": ("if (lg - 1 >= tr::dec_hi || lg <= tr::dec_lo) { return 2; }", "if (lg - 1 >= tr::dec_hi) { return 2; }"),
+    # the comparison with the halfway point
+    "slow_tie_even": ("m += m & 1;  // a tie: the even mantissa", "m += 1 - (m & 1);"),
+    "slow_tie_up": ("m += m & 1;  // a tie: the even mantissa", "++m;"),
+    "slow_tie_down": ("if (c < 0) {\n\t\t\t\tdone = true;\n\t\t\t} else if (c == 0) {", "if (c <= 0) {\n\t\t\t\tdone = true;\n\t\t\t} else if (c == 100) {"),
+    "slow_loop_cap": ("for (int i = 0; i < 4 && !done; ++i) {", "for (int i = 0; i < 1 && !done; ++i) {"),
+    "slow_cmp_shift": ("a.shl(q - mn);", "a.shl(q - mn + (q > 20 ? 1 : 0));"),
+    "slow_cmp_t": ("b.mul(t);", "b.mul(t + (g > 0 ? 1 : 0));"),
+    "slow_candidate": ("m0 = (hi >> (63 + u - nb)) >> 1;", "m0 = ((hi >> (63 + u - nb)) >> 1) + 1;"),
+    "slow_candidate_exp": ("const int E = ((q * 217706) >> 16) + 63 + u - lz;  // the binary exponent of the leading bit", "const int E = ((q * 217706) >> 16) + 63 + u - lz + 1;  // the binary exponent of the leading bit"),
+    "slow_emin": ("if (E >= 1 - tr::bias) {\n\t\tm0 =", "if (E >= -tr::bias) {\n\t\tm0 ="),
+    "slow_final_renorm": ("\tif (m == (std::uint64_t(1) << (tr::mant + 1))) {\n\t\tm >>= 1;\n\t\t++eu;\n\t}\n\tconst std::ptrdiff_t be", "\tconst std::ptrdiff_t be"),
+    # the screening of a subnormal or zero result without a division
+    "slow_below_exp": ("if (E < -tr::bias) { return cand_below; }", "if (E < -tr::bias + 1) { return cand_below; }"),
+    "slow_below_margin": ("return hn < t_hn - 256 ? cand_below : cand_unknown;", "return hn < t_hn + 256 ? cand_below : cand_unknown;"),
+    "slow_below_normalise": ("const std::uint64_t hn = u != 0 ? hi : (hi << 1) | (lo >> 63);", "const std::uint64_t hn = hi;"),
+    "slow_below_exact": ("if (static_cast<std::ptrdiff_t>(nd) * 100000 <= -q * 69897) { return 2; }", "if (true) { return 2; }"),
+    "slow_below_exact_const": ("-q * 69897) { return 2; }", "-q * 79897) { return 2; }"),
+    # the 128 bit comparison
+    "slow_small_t": ("c = cmp_small(w, static_cast<int>(q), 2 * m + 1, eu - 1);", "c = cmp_small(w, static_cast<int>(q), 2 * m, eu - 1);"),
+    "slow_small_nd": ("const bool small = nd <= 19 &&", "const bool small = nd <= 20 &&"),
+    "slow_small_pow5": ("mul64(t, pow5_small.v[-q], b.hi, b.lo);", "mul64(t, pow5_small.v[-q + 1], b.hi, b.lo);"),
+    "slow_small_shift": ("return cmp128(shl128(a, static_cast<unsigned>(s)), b);", "return cmp128(shl128(a, static_cast<unsigned>(s + 1)), b);"),
+    "slow_small_side": ("a = U128{0, D};", "a = U128{0, D + 1};"),
+    "slow_shl128_carry": ("return U128{(v.hi << s) | (v.lo >> (64 - s)), v.lo << s};", "return U128{(v.hi << s), v.lo << s};"),
+    "slow_cmp128": ("if (a.lo != b.lo) { return a.lo < b.lo ? -1 : 1; }\n\treturn 0;\n}\ninline int cmp_small", "if (a.lo != b.lo) { return a.lo > b.lo ? -1 : 1; }\n\treturn 0;\n}\ninline int cmp_small"),
+    # the division, for the subnormal range
+    "slow_div_tie": ("if (c > 0 || (c == 0 && (m & 1) != 0)) { ++m; }", "if (c > 0) { ++m; }"),
+    "slow_div_exact": ("const bool exact = N.zero();", "const bool exact = false;"),
+    "slow_div_exp": ("const std::ptrdiff_t E = (Big::cmp(x, y) >= 0 ? r0 : r0 - 1) + q;", "const std::ptrdiff_t E = r0 + q;"),
+    "slow_div_clamp": ("\t\tif (eu < tr::qsub) { eu = tr::qsub; }\n", ""),
+    # what it returns, and what the API does with it
+    "slow_exact_subnormal": ("return exact ? 0 : 2;", "return 2;"),
+    "slow_subnormal_carry": ("if (m >= (std::uint64_t(1) << tr::mant)) { return 0; }", "if (false) { return 0; }"),
+    "slow_zero_status": ("if (m == 0) { return 2; }", "if (m == 0) { return 0; }"),
+    "slow_no_overflow": ("\tif (be >= tr::max_be) { return 2; }\n\tconst bits_t b =", "\tconst bits_t b ="),
+    "slow_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(b | (static_cast<bits_t>(neg) << top)));\n\treturn 1;", "out = std::bit_cast<R>(b);\n\treturn 1;"),
+    "slow_zero_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(static_cast<bits_t>(neg) << top));", "out = std::bit_cast<R>(static_cast<bits_t>(0));"),
+    "slow_errno": ("*errno_save = status == 2 ? ERANGE : 0;", "*errno_save = 0;"),
+    "slow_idx_on_range": ("\t\t\t\t} else if (status == 2) {\n\t\t\t\t\tout = static_cast<Out>(0);", "\t\t\t\t} else if (status == 2) {\n\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\tif (idx) { *idx = str.size(); }"),
+    "slow_no_throw": ("if (status == 2) { throw std::out_of_range(std::string(name) + \": Out of range value: \" + std::string(str)); }", "if (status == 2) { return fast; }"),
+    # the big integers
+    "slow_pow5_chunk": ("while (k >= 27) { mul(pow5_small.v[27]); k -= 27; }", "while (k >= 27) { mul(pow5_small.v[27]); k -= 26; }"),
+    "slow_shl_high": ("l[top] = l[n - 1] >> (64 - b);", "l[top] = 0;"),
+    "slow_cmp_order": ("if (a.l[i] != b.l[i]) { return a.l[i] < b.l[i] ? -1 : 1; }", "if (a.l[i] != b.l[i]) { return a.l[i] < b.l[i] ? 1 : -1; }"),
+    "slow_from_digits": ("\t\t\tmul(pow10_small.v[k]);\n\t\t\tadd(chunk);", "\t\t\tmul(pow10_small.v[k]);"),
+    # the short path (at most 19 digits: no digit array)
+    "slow_short_digits10": ("return static_cast<std::size_t>(t + 1 - (w < pow10_small.v[t] ? 1 : 0));", "return static_cast<std::size_t>(t + 1);"),
+    "slow_short_q": ("\t\tnd = digits10(wall);\n\t\tq -= static_cast<std::ptrdiff_t>(fe - fb);", "\t\tnd = digits10(wall);"),
+    "slow_short_limit": ("if (nall <= 19) {", "if (nall <= 20) {"),
+    "slow_short_digits": ("if (have_dg) { X.from_digits(dg, nd); } else { X.set(w); }", "X.from_digits(dg, nd);"),
 }
 
 # The tests every mutant is built against: name -> (source, extra flags).
@@ -109,21 +192,29 @@ TESTS = {
     "fp_test": ("fp_test.cc", []),
     "rounding_test": ("rounding_test.cc", []),
     "locale_mock_test": ("locale_test.cc", ["-DLOCALE_TEST_MOCK=1"]),
+    "slow_test": ("slow_test.cc", ["-DSTRICT_STOX_COUNT_LIBC=1"]),
 }
-# Mutants that one named test has to kill by itself.
+# Mutants that one named test has to kill by itself. The mutants of the exact path (slow_*) are killed by slow_test unless named here.
 REQUIRED_KILLER = {
     "no_rounding_guard": "rounding_test",
     "rounding_guard_neg_only": "rounding_test",
     "no_locale": "locale_mock_test",
     "locale_first_byte_only": "locale_mock_test",
     "locale_always_checked": "locale_mock_test",
+    "slow_no_locale_guard": "locale_mock_test",
 }
+for _name in MUTANTS:
+    if _name.startswith("slow_"):
+        REQUIRED_KILLER.setdefault(_name, "slow_test")
+# A mutant that never returns (a loop without an exit) is as dead as one that fails.
+RUN_TIMEOUT = 300
+
 
 work = os.environ.get("MUT_DIR") or tempfile.mkdtemp(prefix="stox-mut-")
 os.makedirs(work, exist_ok=True)
 survived = []
 for name, (old, new) in MUTANTS.items():
-    if only and name not in only:
+    if not selected(name):
         continue
     if old not in src:
         print("%-24s PATCH DID NOT APPLY" % name)
@@ -147,7 +238,12 @@ for name, (old, new) in MUTANTS.items():
             print("%-24s BUILD FAILED (%s): %s" % (name, tname, r.stderr[:300]))
             broken = True
             break
-        t = subprocess.run([exe], capture_output=True, text=True, cwd=d)
+        try:
+            t = subprocess.run([exe], capture_output=True, text=True, cwd=d, timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            killers.append(tname)
+            first = "(timed out)"
+            break
         if t.returncode != 0:
             killers.append(tname)
             first = ([l for l in t.stderr.splitlines() if l] or [""])[0][:90]

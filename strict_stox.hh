@@ -179,6 +179,9 @@ struct fp_traits<double> {
 	static constexpr int mant = 52;      // stored mantissa bits
 	static constexpr int bias = 1023;
 	static constexpr int max_be = 2047;  // biased exponent of inf and nan
+	static constexpr int qsub = -1074;   // exponent of the unit of a subnormal
+	static constexpr int dec_hi = 309;   // 10^dec_hi is more than the largest finite value
+	static constexpr int dec_lo = -324;  // 10^dec_lo is less than half the smallest subnormal
 };
 template <>
 struct fp_traits<float> {
@@ -186,6 +189,9 @@ struct fp_traits<float> {
 	static constexpr int mant = 23;
 	static constexpr int bias = 127;
 	static constexpr int max_be = 255;
+	static constexpr int qsub = -149;
+	static constexpr int dec_hi = 39;
+	static constexpr int dec_lo = -46;
 };
 
 // 5^q for q in [pow5_qmin, pow5_qmax]: its 64 leading bits, truncated, as a value in
@@ -648,8 +654,478 @@ inline bool fast_fp(R& out, std::string_view s) noexcept {
 	return true;
 }
 
+// ---- The exact conversion --------------------------------------------------------------------------------
+//
+// fast_fp declines the texts whose rounding its 64-bit table cannot decide and the texts whose result is
+// subnormal, zero or infinite. fp_slow converts those exactly, so that for decimal text in the default
+// rounding mode libc is asked only for what it alone defines: the rounding modes, the locale, hex floats,
+// inf and nan, and the errno of an exactly representable subnormal (glibc sets ERANGE only when the result
+// is inexact, Apple's libc always).
+//
+// The method is the one of Lemire's "Number Parsing at a Gigabyte per Second" (section on the slow path), the
+// comparison of the exact decimal value with the halfway point between two floats, in big integers. The text
+// is D * 10^q with D the first 768 significant digits and, when any later digit is not zero, one more digit 1
+// (a halfway point has at most 767 significant digits, so the value is on the same side of it as before). The
+// 64-bit table gives a candidate mantissa m that the rounded result cannot fall below; then
+//     D * 10^q  <,  =,  >  (2m + 1) * 2^(e - 1)      with e the exponent of the unit of m
+// is decided exactly (a tie goes to the even mantissa), and the candidate moves up one unit at a time. Texts
+// whose result is subnormal, and q outside the table, are divided: D * 10^q / 2^e by shift and subtract.
+// A conversion that does not fit the fixed big integers is declined.
+
+inline constexpr int slow_digits = 768;
+
+struct Pow5Small {
+	std::uint64_t v[28];  // 5^0 .. 5^27
+	constexpr Pow5Small() : v() {
+		std::uint64_t x = 1;
+		for (int i = 0; i < 28; ++i) {
+			v[i] = x;
+			x *= 5;
+		}
+	}
+};
+inline constexpr Pow5Small pow5_small{};
+
+struct Pow10Small {
+	std::uint64_t v[20];  // 10^0 .. 10^19
+	constexpr Pow10Small() : v() {
+		std::uint64_t x = 1;
+		for (int i = 0; i < 20; ++i) {
+			v[i] = x;
+			x *= 10;
+		}
+	}
+};
+inline constexpr Pow10Small pow10_small{};
+
+// An unsigned integer of at most 80 * 64 bits. An operation that would need more sets `ovf` and the
+// result is not to be used.
+struct Big {
+	static constexpr int cap = 48;  // the largest value is below 2^2650 (41 limbs): 769 digits and a power of 5 up to 5^1093
+	std::uint64_t l[cap];
+	int n;
+	bool ovf;
+	Big() noexcept : n(0), ovf(false) { }
+	void copy(const Big& o) noexcept {
+		n = o.n;
+		ovf = o.ovf;
+		for (int i = 0; i < n; ++i) { l[i] = o.l[i]; }
+	}
+	void set(std::uint64_t v) noexcept {
+		l[0] = v;
+		n = v != 0;
+	}
+	bool zero() const noexcept { return n == 0; }
+	void mul(std::uint64_t m) noexcept {
+		std::uint64_t carry = 0;
+		for (int i = 0; i < n; ++i) {
+			std::uint64_t hi, lo;
+			mul64(l[i], m, hi, lo);
+			lo += carry;
+			hi += lo < carry;
+			l[i] = lo;
+			carry = hi;
+		}
+		if (carry != 0) {
+			if (n == cap) { ovf = true; return; }
+			l[n++] = carry;
+		}
+	}
+	void add(std::uint64_t a) noexcept {
+		for (int i = 0; i < n && a != 0; ++i) {
+			l[i] += a;
+			a = l[i] < a;
+		}
+		if (a != 0) {
+			if (n == cap) { ovf = true; return; }
+			l[n++] = a;
+		}
+	}
+	void mul_pow5(unsigned k) noexcept {
+		while (k >= 27) { mul(pow5_small.v[27]); k -= 27; }
+		if (k != 0) { mul(pow5_small.v[k]); }
+	}
+	void shl(std::ptrdiff_t k) noexcept {
+		if (n == 0 || k == 0) { return; }
+		const std::ptrdiff_t w = k / 64;
+		const unsigned b = static_cast<unsigned>(k % 64);
+		if (n + w + 1 > cap) { ovf = true; return; }
+		const int top = n + static_cast<int>(w);
+		if (b == 0) {
+			for (int i = n - 1; i >= 0; --i) { l[i + w] = l[i]; }
+			for (std::ptrdiff_t i = 0; i < w; ++i) { l[i] = 0; }
+			n = top;
+			return;
+		}
+		l[top] = l[n - 1] >> (64 - b);
+		for (int i = n - 1; i > 0; --i) { l[i + w] = (l[i] << b) | (l[i - 1] >> (64 - b)); }
+		l[w] = l[0] << b;
+		for (std::ptrdiff_t i = 0; i < w; ++i) { l[i] = 0; }
+		n = top + (l[top] != 0);
+	}
+	void shr1() noexcept {
+		for (int i = 0; i < n; ++i) { l[i] = (l[i] >> 1) | (i + 1 < n ? l[i + 1] << 63 : 0); }
+		if (n != 0 && l[n - 1] == 0) { --n; }
+	}
+	std::ptrdiff_t bitlen() const noexcept { return n == 0 ? 0 : 64 * static_cast<std::ptrdiff_t>(n - 1) + (64 - clz64(l[n - 1])); }
+	static int cmp(const Big& a, const Big& b) noexcept {
+		if (a.n != b.n) { return a.n < b.n ? -1 : 1; }
+		for (int i = a.n - 1; i >= 0; --i) {
+			if (a.l[i] != b.l[i]) { return a.l[i] < b.l[i] ? -1 : 1; }
+		}
+		return 0;
+	}
+	void sub(const Big& b) noexcept {  // *this -= b, *this >= b
+		std::uint64_t borrow = 0;
+		for (int i = 0; i < n; ++i) {
+			const std::uint64_t bi = i < b.n ? b.l[i] : 0;
+			const std::uint64_t d = l[i] - bi - borrow;
+			borrow = (l[i] < bi) || (l[i] - bi < borrow);
+			l[i] = d;
+		}
+		while (n != 0 && l[n - 1] == 0) { --n; }
+	}
+	void from_digits(const std::uint8_t* d, std::size_t nd) noexcept {
+		n = 0;
+		for (std::size_t i = 0; i < nd;) {
+			const std::size_t k = nd - i < 19 ? nd - i : 19;
+			std::uint64_t chunk = 0;
+			for (std::size_t j = 0; j < k; ++j) { chunk = chunk * 10 + d[i + j]; }
+			mul(pow10_small.v[k]);
+			add(chunk);
+			i += k;
+		}
+	}
+};
+
+// The same comparison in 128 bit arithmetic, for D * 10^q with D below 2^64 (at most 19 digits) and |q| <= 27 (5^|q| < 2^63):
+// V = D * 10^q against H = t * 2^g, t > 0 below 2^55. Both sides are scaled to integers, (D 5^q) 2^q and t 2^g for q >= 0,
+// D 2^q and (t 5^-q) 2^g for q < 0, and the one with the larger power of two is shifted. 2 when a shifted side does not fit.
+struct U128 {
+	std::uint64_t hi, lo;
+};
+inline int bitlen128(const U128& v) noexcept { return v.hi != 0 ? 128 - clz64(v.hi) : (v.lo != 0 ? 64 - clz64(v.lo) : 0); }
+inline U128 shl128(const U128& v, unsigned s) noexcept {  // s < 128
+	if (s == 0) { return v; }
+	if (s >= 64) { return U128{v.lo << (s - 64), 0}; }
+	return U128{(v.hi << s) | (v.lo >> (64 - s)), v.lo << s};
+}
+inline int cmp128(const U128& a, const U128& b) noexcept {
+	if (a.hi != b.hi) { return a.hi < b.hi ? -1 : 1; }
+	if (a.lo != b.lo) { return a.lo < b.lo ? -1 : 1; }
+	return 0;
+}
+inline int cmp_small(std::uint64_t D, int q, std::uint64_t t, std::ptrdiff_t g) noexcept {
+	U128 a, b;
+	if (q >= 0) {
+		mul64(D, pow5_small.v[q], a.hi, a.lo);
+		b = U128{0, t};
+	} else {
+		a = U128{0, D};
+		mul64(t, pow5_small.v[-q], b.hi, b.lo);
+	}
+	const std::ptrdiff_t sa = q, sb = g;  // a * 2^sa against b * 2^sb
+	// A candidate of the table has both sides within a few units of each other, so the shifted side always fits; if it does
+	// not, the caller compares in big integers.
+	if (sa >= sb) {
+		const std::ptrdiff_t s = sa - sb;
+		if (bitlen128(a) - 1 + s >= 128) { return 2; }
+		return cmp128(shl128(a, static_cast<unsigned>(s)), b);
+	}
+	const std::ptrdiff_t s = sb - sa;
+	if (bitlen128(b) - 1 + s >= 128) { return 2; }
+	return cmp128(a, shl128(b, static_cast<unsigned>(s)));
+}
+
+// How the table places the value of w * 10^q (w != 0, at most the leading 19 digits of the text, so the value of the text is
+// in [P, P (1 + 2^-59)) for the table product P below):
+//   cand_normal   in the normal range: m0 is the mantissa the rounded value cannot be below, eq the exponent of its unit
+//   cand_below    surely below T = 2^emin (1 - 2^-(mant + 1)), the point from which a value rounds up to the smallest normal one:
+//                 a subnormal or zero result
+//   cand_unknown  the table does not decide
+enum : int { cand_normal = 0, cand_below = 1, cand_unknown = 2 };
+template <typename R>
+inline int el_candidate(std::uint64_t w, int q, std::uint64_t& m0, int& eq) noexcept {
+	using tr = fp_traits<R>;
+	constexpr int nb = tr::mant + 2;
+	const int lz = clz64(w);
+	std::uint64_t hi, lo;
+	mul64(w << lz, pow5_tab[q - pow5_qmin], hi, lo);
+	const int u = static_cast<int>(hi >> 63);
+	const int E = ((q * 217706) >> 16) + 63 + u - lz;  // the binary exponent of the leading bit
+	if (E >= 1 - tr::bias) {
+		m0 = (hi >> (63 + u - nb)) >> 1;
+		eq = E - tr::mant;
+		return cand_normal;
+	}
+	if (E < -tr::bias) { return cand_below; }  // below 2^(emin - 1) (1 + 2^-59): well below T
+	// E = emin - 1: P is hn * 2^(emin - 64) with hn its leading 64 bits, and T is (2^64 - 2^(63 - mant)) * 2^(emin - 64); the
+	// error of P is below 2^5 units of hn
+	const std::uint64_t hn = u != 0 ? hi : (hi << 1) | (lo >> 63);
+	const std::uint64_t t_hn = 0 - (1ULL << (63 - tr::mant));
+	return hn < t_hn - 256 ? cand_below : cand_unknown;
+}
+
+// V = (X / Y) * 2^q against H = t * 2^g, t > 0: -1, 0 or 1; 2 when a big integer overflowed.
+inline int cmp_scaled(const Big& X, const Big& Y, std::ptrdiff_t q, std::uint64_t t, std::ptrdiff_t g) noexcept {
+	const std::ptrdiff_t mn = q < g ? q : g;
+	Big a, b;
+	a.copy(X);
+	a.shl(q - mn);
+	b.copy(Y);
+	b.mul(t);
+	b.shl(g - mn);
+	if (a.ovf || b.ovf) { return 2; }
+	return Big::cmp(a, b);
+}
+
+// The number of decimal digits of w != 0.
+inline std::size_t digits10(std::uint64_t w) noexcept {
+	const int t = ((64 - clz64(w)) * 1233) >> 12;  // floor(log10(2^bits))
+	return static_cast<std::size_t>(t + 1 - (w < pow10_small.v[t] ? 1 : 0));
+}
+
+// 0: not converted (libc decides), 1: out holds the value, 2: out of range (infinity, or zero from a non-zero text, or
+// an inexact subnormal: strtod sets ERANGE).
+template <typename R, bool Division = false>
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+inline int fp_slow(R& out, std::string_view s) noexcept {
+	using tr = fp_traits<R>;
+	using bits_t = typename tr::bits;
+	constexpr int top = static_cast<int>(sizeof(bits_t) * 8 - 1);
+	const char* p = s.data();
+	const char* const e = p + s.size();
+	if (p == e) { return 0; }
+	const bool neg = *p == '-';
+	p += neg;
+	std::uint64_t wall = 0;  // all the digits as one number: the value of the text, when it has at most 19 digits
+	const char* const ib = p;
+	p = scan_digits(p, e, wall);
+	const char* const ie = p;
+	const char* fb = p;
+	const char* fe = p;
+	bool dot = false;
+	if (p != e && *p == '.') {
+		dot = true;
+		fb = ++p;
+		p = scan_digits(p, e, wall);
+		fe = p;
+	}
+	if (ie == ib && fb == fe) { return 0; }
+	std::ptrdiff_t q = 0;
+	if (p != e) {
+		if ((static_cast<unsigned char>(*p) | 0x20) != 'e') { return 0; }
+		if (++p == e) { return 0; }
+		const bool eneg = *p == '-';
+		if ((eneg || *p == '+') && ++p == e) { return 0; }
+		for (; p != e; ++p) {
+			const unsigned d = static_cast<unsigned char>(*p) - '0';
+			if (d > 9) { return 0; }
+			if (q < 1000000000000000LL) { q = q * 10 + static_cast<std::ptrdiff_t>(d); }  // saturates: no text is long enough to undo it
+		}
+		if (eneg) { q = -q; }
+	}
+	if (!rounds_to_nearest()) { return 0; }
+	if (dot && !decimal_point_is_dot()) { return 0; }
+
+	// The significant digits as D * 10^q. A text of at most 19 digits is the number the scan made. A longer one keeps its first
+	// 768 significant digits, and a final digit 1 when a later one is not zero (see above).
+	std::uint8_t dg[slow_digits + 1];
+	std::size_t nd = 0;
+	std::uint64_t w = 0;  // the leading (at most 19) significant digits
+	bool have_dg = false;
+	const std::size_t nall = static_cast<std::size_t>(ie - ib) + static_cast<std::size_t>(fe - fb);
+	if (nall <= 19) {
+		if (wall == 0) {  // all zeros: zero, whatever the exponent
+			out = std::bit_cast<R>(static_cast<bits_t>(static_cast<bits_t>(neg) << top));
+			return 1;
+		}
+		w = wall;
+		nd = digits10(wall);
+		q -= static_cast<std::ptrdiff_t>(fe - fb);
+	} else {
+		have_dg = true;
+		bool sticky = false;
+		const auto take = [&](const char* from, std::size_t n) {
+			for (std::size_t i = 0; i < n; ++i) { dg[nd + i] = static_cast<std::uint8_t>(from[i] - '0'); }
+			nd += n;
+		};
+		const char* const a = skip_zeros(ib, ie);
+		if (a != ie) {
+			const std::size_t ni = static_cast<std::size_t>(ie - a);
+			const std::size_t ti = ni < slow_digits ? ni : slow_digits;
+			take(a, ti);
+			q += static_cast<std::ptrdiff_t>(ni - ti);  // integer digits not taken are factors of 10
+			sticky = ni > ti && any_nonzero(a + ti, ie);
+			const std::size_t nf = static_cast<std::size_t>(fe - fb);
+			const std::size_t tf = nf < slow_digits - nd ? nf : slow_digits - nd;
+			take(fb, tf);
+			q -= static_cast<std::ptrdiff_t>(tf);
+			sticky = sticky || (nf > tf && any_nonzero(fb + tf, fe));
+		} else {
+			const char* const b = skip_zeros(fb, fe);
+			if (b == fe) {  // all zeros: zero, whatever the exponent
+				out = std::bit_cast<R>(static_cast<bits_t>(static_cast<bits_t>(neg) << top));
+				return 1;
+			}
+			const std::size_t nf = static_cast<std::size_t>(fe - b);
+			const std::size_t tf = nf < slow_digits ? nf : slow_digits;
+			take(b, tf);
+			q -= static_cast<std::ptrdiff_t>(static_cast<std::size_t>(b - fb) + tf);
+			sticky = nf > tf && any_nonzero(b + tf, fe);
+		}
+		if (sticky) {
+			dg[nd++] = 1;
+			--q;
+		}
+		const std::size_t nlead = nd < 19 ? nd : 19;
+		for (std::size_t i = 0; i < nlead; ++i) { w = w * 10 + dg[i]; }
+	}
+	// The value is in [10^(lg - 1), 10^lg).
+	const std::ptrdiff_t lg = q + static_cast<std::ptrdiff_t>(nd);
+	if (lg - 1 >= tr::dec_hi || lg <= tr::dec_lo) { return 2; }
+
+	// The candidate from the table, from the leading (at most 19) digits.
+	std::uint64_t m = 0;  // the mantissa, in units of 2^eu
+	std::ptrdiff_t eu = 0;
+	bool done = false;
+	const std::size_t nlead = nd < 19 ? nd : 19;
+	int cand = cand_unknown;
+	int eq = 0;
+	if (!Division) {
+		const std::ptrdiff_t q19 = q + static_cast<std::ptrdiff_t>(nd - nlead);
+		if (q19 >= pow5_qmin && q19 <= pow5_qmax) { cand = el_candidate<R>(w, static_cast<int>(q19), m, eq); }
+	}
+	if (cand == cand_below) {
+		// A subnormal or zero result is ERANGE, unless the value is exactly representable (libc's errno then). That needs
+		// 5^-q to divide D, the digits as a number, so D >= 5^-q and the digits number more than 0.69897 * -q.
+		if (static_cast<std::ptrdiff_t>(nd) * 100000 <= -q * 69897) { return 2; }
+		cand = cand_unknown;
+	}
+
+	// V = (X / Y) * 2^q, in big integers, when the comparison needs them
+	Big X, Y;
+	bool have_bigs = false;
+	const auto bigs = [&]() noexcept {
+		if (!have_bigs) {
+			have_bigs = true;
+			if (have_dg) { X.from_digits(dg, nd); } else { X.set(w); }
+			if (q > 0) { X.mul_pow5(static_cast<unsigned>(q)); }
+			Y.set(1);
+			if (q < 0) { Y.mul_pow5(static_cast<unsigned>(-q)); }
+		}
+		return !(X.ovf || Y.ovf);
+	};
+
+	if (cand == cand_normal) {
+		eu = eq;
+		const bool small = nd <= 19 && q >= -27 && q <= 27;  // w is all of D, and the comparison fits in 128 bits
+		// The value is below P (1 + 2^-59), a small fraction of a unit above the candidate: the rounded mantissa is m0 or
+		// m0 + 1. When that is 2^(mant + 1), the value is within 2^-59 of the next power of two, so it rounds to it and the
+		// renormalisation below applies.
+		for (int i = 0; i < 4 && !done; ++i) {
+			int c = 2;
+			if (small) { c = cmp_small(w, static_cast<int>(q), 2 * m + 1, eu - 1); }
+			if (c == 2) {
+				if (!bigs()) { return 0; }
+				c = cmp_scaled(X, Y, q, 2 * m + 1, eu - 1);
+				if (c == 2) { return 0; }
+			}
+			if (c < 0) {
+				done = true;
+			} else if (c == 0) {
+				m += m & 1;  // a tie: the even mantissa
+				done = true;
+			} else {
+				++m;
+			}
+		}
+		if (!done) { return 0; }
+	}
+	bool normal = done;
+	if (!done) {
+		if (!bigs()) { return 0; }
+		// The exponent of the leading bit, exactly, then the quotient of V by the unit of the result.
+		const std::ptrdiff_t r0 = X.bitlen() - Y.bitlen();
+		Big x, y;
+		x.copy(X);
+		y.copy(Y);
+		if (r0 >= 0) { y.shl(r0); } else { x.shl(-r0); }
+		if (x.ovf || y.ovf) { return 0; }
+		const std::ptrdiff_t E = (Big::cmp(x, y) >= 0 ? r0 : r0 - 1) + q;
+		eu = E - tr::mant;
+		if (eu < tr::qsub) { eu = tr::qsub; }
+		const std::ptrdiff_t t = q - eu;
+		Big N, Dn;
+		N.copy(X);
+		Dn.copy(Y);
+		if (t >= 0) { N.shl(t); } else { Dn.shl(-t); }
+		if (N.ovf || Dn.ovf) { return 0; }
+		const std::ptrdiff_t k = N.bitlen() - Dn.bitlen();
+		if (k > 62) { return 0; }
+		m = 0;
+		if (k >= 0) {
+			Big Ds;
+			Ds.copy(Dn);
+			Ds.shl(k);
+			if (Ds.ovf) { return 0; }
+			for (std::ptrdiff_t i = k; i >= 0; --i) {
+				if (Big::cmp(N, Ds) >= 0) {
+					N.sub(Ds);
+					m |= std::uint64_t(1) << i;
+				}
+				if (i != 0) { Ds.shr1(); }
+			}
+		}
+		const bool exact = N.zero();
+		N.shl(1);
+		if (N.ovf) { return 0; }
+		const int c = Big::cmp(N, Dn);
+		if (c > 0 || (c == 0 && (m & 1) != 0)) { ++m; }
+		normal = E >= 1 - tr::bias;
+		if (!normal) {
+			if (m >= (std::uint64_t(1) << tr::mant)) { return 0; }  // rounded up to the smallest normal value: libc's errno
+			if (m == 0) { return 2; }                               // zero from a non-zero text
+			return exact ? 0 : 2;                                   // an exact subnormal: libc's errno; an inexact one: ERANGE
+		}
+	}
+	// A normal value: m is in [2^mant, 2^(mant + 1)], the last when it rounded up to the next power of two.
+	if (m == (std::uint64_t(1) << (tr::mant + 1))) {
+		m >>= 1;
+		++eu;
+	}
+	const std::ptrdiff_t be = eu + tr::mant + tr::bias;
+	if (be >= tr::max_be) { return 2; }
+	const bits_t b = static_cast<bits_t>((static_cast<bits_t>(be) << tr::mant) | static_cast<bits_t>(m & ((std::uint64_t(1) << tr::mant) - 1)));
+	out = std::bit_cast<R>(static_cast<bits_t>(b | (static_cast<bits_t>(neg) << top)));
+	return 1;
+}
+
+
 }  // namespace strict_stox_detail
 
+
+#ifdef STRICT_STOX_COUNT_LIBC
+// Test seam: stof and stod call these, which count the texts that reach libc.
+namespace strict_stox_detail {
+inline thread_local std::size_t libc_calls = 0;
+inline float counted_strtof(const char* s, char** e) noexcept {
+	++libc_calls;
+	return std::strtof(s, e);
+}
+inline double counted_strtod(const char* s, char** e) noexcept {
+	++libc_calls;
+	return std::strtod(s, e);
+}
+}  // namespace strict_stox_detail
+#define STRICT_STOX_STRTOF strict_stox_detail::counted_strtof
+#define STRICT_STOX_STRTOD strict_stox_detail::counted_strtod
+#else
+#define STRICT_STOX_STRTOF std::strtof
+#define STRICT_STOX_STRTOD std::strtod
+#endif
 
 // Types conversion strict_stox and strict_nothrow_stox
 template <typename F>
@@ -709,37 +1185,46 @@ class Stox {
 		if constexpr (std::is_same_v<F, G>) { return func == g; } else { return false; }
 	}
 
-	// Try the fast path. On success, `out` holds the final value (already
-	// range-checked for T) and the result is exactly what the strto* path
-	// returns with errno == 0. Returns false to defer to the strto* path.
+	// Try the direct conversion. 1: `out` holds the final value (already range-checked for T),
+	// exactly what the strto* path returns with errno == 0. 2: the strto* path would set ERANGE
+	// (`out` is 0, `idx` untouched). 0: defer to the strto* path.
 	template <typename T, typename Out, typename... Args>
-	bool _fast(Out& out, const std::string_view& str, std::size_t* idx, Args&&... args) const noexcept {
+	int _fast(Out& out, const std::string_view& str, std::size_t* idx, Args&&... args) const noexcept {
 		if constexpr (sizeof...(Args) == 1 && std::is_invocable_v<F, const char*, char**, int>) {
-			if (!(_is(&std::strtol) || _is(&std::strtoul) || _is(&std::strtoll) || _is(&std::strtoull))) { return false; }
+			if (!(_is(&std::strtol) || _is(&std::strtoul) || _is(&std::strtoll) || _is(&std::strtoull))) { return 0; }
 			using R = std::invoke_result_t<F, const char*, char**, int>;
 			if constexpr (std::is_integral_v<R>) {
 				const int base = (static_cast<int>(args), ...);
 				R r;
-				if (!strict_stox_detail::fast_int(r, str, base)) { return false; }
+				if (!strict_stox_detail::fast_int(r, str, base)) { return 0; }
 				if constexpr (!std::is_void_v<T>) {
-					if (r < std::numeric_limits<T>::min() || std::numeric_limits<T>::max() < r) { return false; }
+					if (r < std::numeric_limits<T>::min() || std::numeric_limits<T>::max() < r) { return 0; }
 				}
 				out = static_cast<Out>(r);
 				if (idx) { *idx = str.size(); }
-				return true;
+				return 1;
 			}
 		} else if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
 			using R = std::invoke_result_t<F, const char*, char**>;
 			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
-				if (!(_is(&std::strtof) || _is(&std::strtod))) { return false; }
+				if (!(_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return 0; }
 				R r;
-				if (!strict_stox_detail::fast_fp(r, str)) { return false; }
-				out = static_cast<Out>(r);
-				if (idx) { *idx = str.size(); }
-				return true;
+				if (strict_stox_detail::fast_fp(r, str)) {
+					out = static_cast<Out>(r);
+					if (idx) { *idx = str.size(); }
+					return 1;
+				}
+				const int status = strict_stox_detail::fp_slow<R>(r, str);
+				if (status == 1) {
+					out = static_cast<Out>(r);
+					if (idx) { *idx = str.size(); }
+				} else if (status == 2) {
+					out = static_cast<Out>(0);
+				}
+				return status;
 			}
 		}
-		return false;
+		return 0;
 	}
 
 public:
@@ -750,8 +1235,8 @@ public:
 	template <typename T, typename... Args>
 	auto stox_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args&&... args) {
 		result_t<T, Args...> fast;
-		if (_fast<T>(fast, str, idx, args...)) {
-			if (errno_save != nullptr) { *errno_save = 0; }
+		if (const int status = _fast<T>(fast, str, idx, args...)) {
+			if (errno_save != nullptr) { *errno_save = status == 2 ? ERANGE : 0; }
 			return fast;
 		}
 		auto _errno = errno;
@@ -767,7 +1252,10 @@ public:
 	template <typename T, typename... Args>
 	auto stox_throw(const std::string_view& str, std::size_t* idx, Args&&... args) {
 		result_t<T, Args...> fast;
-		if (_fast<T>(fast, str, idx, args...)) { return fast; }
+		if (const int status = _fast<T>(fast, str, idx, args...)) {
+			if (status == 2) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
+			return fast;
+		}
 		auto _errno = errno;
 		errno = 0;
 		auto r = _stox<T>(std::is_same<void, T>{}, str, idx, std::forward<Args>(args)...);
@@ -806,8 +1294,10 @@ STOXIFY_BASE(stou, std::strtoul, unsigned)
 STOXIFY_BASE(stol, std::strtol, void)
 STOXIFY_BASE(stoll, std::strtoll, void)
 STOXIFY_BASE(stoz, std::strtoull, std::size_t)
-STOXIFY(stof, std::strtof, void)
-STOXIFY(stod, std::strtod, void)
+STOXIFY(stof, STRICT_STOX_STRTOF, void)
+STOXIFY(stod, STRICT_STOX_STRTOD, void)
 STOXIFY(stold, std::strtold, void)
 #undef STOXIFY_BASE
 #undef STOXIFY
+#undef STRICT_STOX_STRTOF
+#undef STRICT_STOX_STRTOD

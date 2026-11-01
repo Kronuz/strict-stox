@@ -65,6 +65,22 @@ static void check_taken(const char* where, const char* s, bool expect, int line)
 	}
 }
 
+// The same for the exact path, which sees every text the fast path declines: in a locale whose decimal
+// point is not '.', it must decline the dotted texts too (status 0), and still convert the plain ones.
+template <typename R>
+static void check_slow(const char* where, const char* s, bool expect, int line) {
+	R v = 0;
+	const int st = D::fp_slow<R>(v, s);
+	if ((st != 0) != expect) {
+		FAIL("%s: fp_slow<%s>(\"%s\") %s, expected %s (line %d)", where, std::is_same_v<R, double> ? "double" : "float", s, st != 0 ? "converted" : "declined", expect ? "converted" : "declined", line);
+		return;
+	}
+	if (st == 1) {
+		const oracle::Result want = oracle::libc_result<R>(s, false);
+		if (want.err != 0 || want.bits != oracle::to_bits(v)) { FAIL("%s: fp_slow<%s>(\"%s\") bits differ from libc", where, std::is_same_v<R, double> ? "double" : "float", s); }
+	}
+}
+
 // The API must equal libc, in whatever locale is current, for every text.
 static void check_api_all(const char* where, const std::vector<std::string>& texts) {
 	for (const std::string& s : texts) {
@@ -109,10 +125,14 @@ static void mock_radixes() {
 		for (const char* s : dotted) {
 			check_taken<double>(where, s, reads_dot, __LINE__);
 			check_taken<float>(where, s, reads_dot, __LINE__);
+			check_slow<double>(where, s, reads_dot, __LINE__);
+			check_slow<float>(where, s, reads_dot, __LINE__);
 		}
 		for (const char* s : plain) {
 			check_taken<double>(where, s, true, __LINE__);
 			check_taken<float>(where, s, true, __LINE__);
+			check_slow<double>(where, s, true, __LINE__);
+			check_slow<float>(where, s, true, __LINE__);
 		}
 		check_api_all(where, all_texts());  // the mock changes no libc answer; whoever answers, it is libc's
 	}
@@ -144,10 +164,14 @@ static void in_comma_locale(const char* where) {
 	for (const char* s : dotted) {
 		check_taken<double>(where, s, false, __LINE__);
 		check_taken<float>(where, s, false, __LINE__);
+		check_slow<double>(where, s, false, __LINE__);
+		check_slow<float>(where, s, false, __LINE__);
 	}
 	for (const char* s : plain) {
 		check_taken<double>(where, s, true, __LINE__);
 		check_taken<float>(where, s, true, __LINE__);
+		check_slow<double>(where, s, true, __LINE__);
+		check_slow<float>(where, s, true, __LINE__);
 	}
 	check_api_all(where, all_texts());
 	// What the comma locale means for the strict API (libc says the same).
