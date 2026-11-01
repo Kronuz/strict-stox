@@ -49,5 +49,10 @@ library for that decimal point (`nl_langinfo(RADIXCHAR)`, a few nanoseconds).
 A program that never leaves the `"C"` locale can skip the question by defining
 `STRICT_STOX_C_LOCALE` before including the header (CMake: `-DSTRICT_STOX_C_LOCALE=ON`):
 plain decimals are then always read with `.`, whatever `setlocale` says. Everything
-`strtod` handles itself (`inf`, `nan`, hex floats, subnormal and overflowing results,
-trailing text) still follows the locale.
+`strtod` handles itself (`inf`, `nan`, hex floats, trailing text, an exactly representable
+subnormal) still follows the locale.
+
+A decimal text that is subnormal-and-inexact, rounds to zero or overflows is converted
+without `strtod` and gives what `strtod` gives: value 0 and `ERANGE` (the value is 0 and `idx`
+is untouched, as for any error). An exactly representable subnormal is left to `strtod`,
+because glibc sets `ERANGE` only for an inexact subnormal and Apple's libc for every one.

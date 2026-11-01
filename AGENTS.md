@@ -14,12 +14,14 @@ test/diff_test.cc            Differential test against test/strict_stox_old.hh, 
 test/long_test.cc            Inputs of any length against libc strto* and std::from_chars.
 test/fp_test.cc              The floating point fast path against libc strtod/strtof and std::from_chars: table vs big integers, hard cases, exact halfway points, random text; `--stress N`, `--f32` for the long runs.
 test/rounding_test.cc        strict_stod/stof under all four rounding modes (fesetround) against libc, one thread per mode, and values derived by hand.
-test/locale_test.cc          The decimal point guard: a mock decimal point (always runs) and a real comma locale, global and per thread (runs where one is installed).
-test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the two tests above.
+test/locale_test.cc          The decimal point guard (of fast_fp and fp_slow): a mock decimal point (always runs) and a real comma locale, global and per thread (runs where one is installed).
+test/slow_test.cc            The exact decimal path (fp_slow), built with -DSTRICT_STOX_COUNT_LIBC: curated and constructed cases with expected values that come from no libc, exact halfway points, binade boundaries, exact subnormals, random text, and that libc is reached only for what it must decide.
+test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the tests above.
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
-tools/fp_mutants.py          Breaks the fast path in 51 ways and requires the floating point tests to fail on each; the rounding and locale mutants must fail their own test.
+tools/slow_cases.py          Expected results for the curated texts of test/slow_test.cc by exact rational arithmetic (round half to even): value bits, or ERANGE, or "libc decides".
+tools/fp_mutants.py          Breaks the fast and exact paths in 112 ways and requires the floating point tests to fail on each; the rounding, locale and exact path (slow_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
 bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH).
-CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
+CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_slow`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                 Behavior and performance changes, dated.
 README.md                    What it is, install, quick start.
@@ -85,6 +87,15 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   entry cannot decide. Never make it round "mostly right": decline instead.
   `test/fp_test.cc` enforces the property; run `tools/fp_mutants.py` after touching
   `el_convert`, `fp_long` or the digit scanner.
+- **The exact path (`fp_slow`) runs after `fast_fp` declines, and decides what the table
+  cannot.** It returns 0 (libc decides), 1 (the value) or 2 (`ERANGE`). `fast_fp` stays
+  textually as it is: a change to its text moves the code generation of the short texts
+  (x86 most). For decimal text in the default rounding mode libc is reached only for an
+  exactly representable subnormal and for a text that rounds up from below the subnormal
+  range into the smallest normal value, the two results whose `errno` differs between libcs
+  (glibc: `ERANGE` only if inexact; Apple: always). Do not return `ERANGE` for those two.
+  `test/slow_test.cc` counts the calls that reach libc (`-DSTRICT_STOX_COUNT_LIBC`, a seam
+  for tests only) and fails if one is not among them.
 - **The 5^q table is generated.** Edit `tools/gen_pow5.py`, run it with `--write`, and
   the `strict_stox_pow5_table` test (`--check`) keeps the header honest. The binary
   exponent is `(q * 217706) >> 16`; the generator proves it for every `q` in range.
@@ -115,7 +126,18 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   seam for tests only: an expression for the decimal point string, so the guard is tested
   on a machine with no comma locale (`test/locale_test.cc`); never define it in a program.
 - **The fast path assumes round-to-nearest.** It tests the rounding mode on every call
-  (`rounds_to_nearest`) and declines otherwise, because `strtod` honors `fesetround`.
+  (`rounds_to_nearest`) and declines otherwise, because `strtod` honors `fesetround`; so
+  does `fp_slow`.
+- **The exact path keeps 768 significant digits and a sticky digit.** A halfway point has at
+  most 767, so a final digit 1 stands for "more, not zero" without moving the value across
+  one. A tail of digits past the 768th is tested only by constructed texts (`test_between`
+  in `test/slow_test.cc`): random text never lies that close to a halfway point.
+- **`Big` is fixed at 48 limbs.** The bound is 2^2650 (769 digits and `5^1093`); an overflow
+  sets `ovf` and the call is declined to libc, never a wrong answer. Keep the stack frame
+  of `fp_slow` small (about 3.5 KB): it is a cold function.
+- **A candidate of the table is a lower bound.** `el_candidate` returns a mantissa the
+  rounded value cannot be below (the table is truncated and so is the digit prefix); the
+  exact comparison moves it up one unit at a time. Do not use its `m0` as the result.
 
 ## Standalone vs. Xapiand
 

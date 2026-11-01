@@ -52,10 +52,13 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
   it, so `ERANGE` always comes from one place;
 - `stof`/`stod`: `[-]digits[.digits][e[+-]digits]` of any length. The text is reduced to
   `w * 10^q` (`w` the first 19 significant digits) and converted by a table-driven
-  Clinger / Eisel-Lemire algorithm (below). `inf`, `nan`, hex floats, whitespace, `+`,
-  trailing text, results that are subnormal, zero from a non-zero mantissa or
-  infinite (`strtod` sets `ERANGE`), rounding in doubt, a locale whose decimal point is
-  not `.` and a non-default rounding mode take the `strto*` path. `stold` has no fast path;
+  Clinger / Eisel-Lemire algorithm (below); what the table cannot decide is converted
+  exactly, in big integers ("The exact path", below), so no decimal text reaches `strtod`
+  except two results whose `errno` differs between libcs (an exactly representable
+  subnormal, and a text that rounds up from below the subnormal range into the smallest
+  normal value). `inf`, `nan`, hex floats, whitespace, `+`, trailing text, a locale whose
+  decimal point is not `.` and a non-default rounding mode take the `strto*` path.
+  `stold` has no fast path;
 - the fast path applies only when the function is exactly `std::strtol` etc.; a
   `Stox` built around a custom function keeps its own semantics.
 
@@ -91,8 +94,8 @@ the digit count. Then, in order:
    zero (an exact tie, or a product that is exactly a halfway point). Those cases, about one in 1000 for `double` and never in practice for
    `float`, are declined, so there is no second multiplication and no big integer
    fallback inside the fast path. A result that would be subnormal or infinite, or that
-   rounds up into the normal range from below it, is declined too (`strtod` sets
-   `ERANGE` there).
+   rounds up into the normal range from below it, is declined too (they are the exact
+   path's).
 3. **More than 19 digits.** The first 19 significant digits give `w`; if any later
    digit is not zero the exact value is strictly between `w` and `w + 1` (in units
    of `10^q`). Rounding is monotonic, so when `w` and `w + 1` convert to the same
@@ -111,16 +114,74 @@ a libc call (`nl_langinfo`, `localeconv` without `langinfo.h`; 3 ns on Apple sil
 C locale can define `STRICT_STOX_C_LOCALE` before including the header to read `.` without
 asking.
 
-`test/fp_test.cc` states the property the path must keep: whenever `fast_fp` accepts
+## The exact path
+
+`fast_fp` declines what its 64-bit table cannot decide (a rounding within 2^-64 of a
+halfway point) and every subnormal, zero or infinite result. `stox_nothrow` and
+`stox_throw` then call `fp_slow` (through `fp_decline`, out of line, after `fast_fp`, which
+stays as it is, so the code short texts run does not change), which converts them exactly.
+The method is the slow path of
+Lemire's "Number Parsing at a Gigabyte per Second": compare the exact decimal value with
+the halfway point between two floats, in big integers. It returns 0 (libc decides), 1 (the
+value) or 2 (`ERANGE`: the API returns 0 and sets the error, `idx` untouched, as for libc).
+
+1. **The digits.** It reads the text again, with the same guards (rounding mode, decimal
+   point) and an exponent that saturates at 10^15, which no text is long enough to undo.
+   The text is `D * 10^q`: up to 19 digits are the number the scan made; more keep their
+   first 768 significant digits and, when a later digit is not zero, a final digit 1. A
+   halfway point has at most 767 significant digits, so none lies strictly between `D` and
+   `D + 1` unit of the 768th digit, and the value is on the same side of every halfway point
+   as before. The leading digits' decimal exponent `lg = q + digits` decides at once
+   what is certainly infinity (`lg - 1 >= 309`, 39 for `float`) or zero (`lg <= -324`, -46).
+2. **A candidate from the table.** The first 19 digits and the `5^q` table give a
+   product `P` that is below the value by less than `2^-59` of itself. In the normal range
+   that is a mantissa `m0` that the rounded result is at, or one unit above (a unit is
+   `2^-53`): one exact comparison of `D * 10^q` with the halfway point `(2m + 1) * 2^(e - 1)`
+   decides, and a tie goes to the even mantissa. Texts of at most 19 digits with `|q| <= 27`
+   are compared in 128 bit arithmetic (`cmp_small`: both sides are `D 5^q 2^q` against
+   `t 2^g`, or `D 2^q` against `t 5^-q 2^g`); the others in big integers (`cmp_scaled`).
+   A mantissa that reaches `2^53` is the next power of two. A value below the point where
+   it rounds up to the smallest normal value (`2^emin (1 - 2^-(mant + 1))`) is zero or a
+   subnormal: `ERANGE`, without arithmetic, unless it is exactly representable, which
+   needs `5^-q` to divide `D`, so more than `0.69897 * -q` digits (at least 713 for a
+   `double`, 86 for a `float`). Every shorter text is inexact.
+3. **The division.** What the table does not decide (the candidate is too close to the
+   threshold, or the text may be an exact subnormal) is divided: the exact binade from the
+   bit lengths, then `D 10^q / 2^e` by shift and subtract (at most 54 quotient bits),
+   rounded half to even with the remainder. Zero from a non-zero text is `ERANGE`; so is an
+   inexact subnormal; an overflow is `ERANGE`.
+
+`Big` holds 48 limbs: the largest value is below 2^2650 (769 digits, and a power of five up
+to `5^1093`); an operation that would need more sets a flag and the call is declined.
+
+**What still reaches libc**, besides what is not decimal text (hex floats, `inf`, `nan`,
+whitespace, `+`, trailing text), a rounding mode other than to-nearest and a decimal point
+other than `.`: the two results whose `errno` differs between libcs. glibc sets `ERANGE` for
+a subnormal result only when it is inexact, Apple's libc for every one; the exact path
+returns `ERANGE` for the inexact ones (all libcs agree) and leaves the exactly
+representable ones, and a text that rounds up from below the subnormal range into the
+smallest normal value, to libc. Apple's `strtod` aborts on valid text (such as
+`99004559013337762701442583720290300000000000.00000000000000`); no such text reaches it
+now, which `test/slow_test.cc` checks.
+
+`test/fp_test.cc` states the property the fast path must keep: whenever `fast_fp` accepts
 a text, `strtod` (`strtof`) returns the same bits with `errno` clear and consumes the
 whole text. It also checks the table against exact big-integer arithmetic, the hard
 cases, the exact halfway point of every binade, and random text in many formats
 against libc and `std::from_chars`. `test/rounding_test.cc` runs the public API in each of
 the four rounding modes against libc, and `test/locale_test.cc` tests the decimal point guard
-with a mock decimal point (`STRICT_STOX_DECIMAL_POINT`, a seam for tests) and, where one is
-installed, a real comma locale. `tools/fp_mutants.py` breaks the implementation in 51
-deliberate ways and requires each to fail the tests; the rounding and locale mutants must
-fail their own test.
+(of `fast_fp` and of `fp_slow`) with a mock decimal point (`STRICT_STOX_DECIMAL_POINT`, a seam
+for tests) and, where one is installed, a real comma locale. `test/slow_test.cc` is built with
+`-DSTRICT_STOX_COUNT_LIBC`, which makes `stod` and `stof` call a counting wrapper of libc, and
+checks the exact path: a table of cases with expected values from exact rational arithmetic
+(`tools/slow_cases.py`, no libc), the exact halfway point of neighbouring floats (built with its
+own big-integer routine) with tails of digits added or taken so the text lies just above or just
+below, every binade boundary, the exactly representable subnormals, random text of every length
+and exponent with the two variants of the exact path (with and without the table) compared
+against each other and against libc, `cmp_small` against `cmp_scaled`, and that libc is reached
+only for the cases above. `tools/fp_mutants.py` breaks the implementation in 112 deliberate
+ways and requires each to fail the tests; the rounding, locale and exact path mutants must fail
+their own test.
 
 ## The `STOXIFY` macros
 

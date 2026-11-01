@@ -76,15 +76,24 @@ else goes through `strto*`, with the same results, `errno` values, `idx` and exc
 - `stod` and `stof`: `[-]digits[.digits][e[+-]digits]` of any length. The digits are read
   eight at a time. Short numbers take Clinger's exact multiply or divide. The rest (17
   digit doubles, long mantissas) take a 5 KB table of the 64 leading bits of the powers of
-  five and one 64-bit multiply, rounded to nearest. A rounding the table cannot decide
-  (about one 17 digit text in a thousand), a subnormal or overflowing result, `inf`,
-  `nan`, hex floats and a rounding mode other than to-nearest go to `strtod`.
+  five and one 64-bit multiply, rounded to nearest. What the table cannot decide (about
+  one 17 digit text in a thousand) and every subnormal, zero or overflowing result are
+  converted exactly, by comparing the decimal value with the halfway point in big integers
+  (the slow path of Lemire's "Number Parsing at a Gigabyte per Second"), so no decimal text
+  reaches `strtod` in the default rounding mode, except the two results whose `errno`
+  differs between libcs: an exactly representable subnormal, and a text that rounds up from
+  below the subnormal range into the smallest normal value. `inf`, `nan`, hex floats,
+  whitespace, trailing text, a rounding mode other than to-nearest and a locale whose
+  decimal point is not `.` go to `strtod`. Apple's `strtod` aborts on some valid text
+  (`99004559013337762701442583720290300000000000.00000000000000`); no decimal text of that
+  kind reaches it.
 
 `ctest` checks both paths against libc and the frozen previous header; the floating
 point path also against `std::from_chars`, on the exact halfway point of every binade,
 the classic hard cases and random text (`test/fp_test.cc`, `tools/fp_mutants.py`), in each
-of the four rounding modes (`test/rounding_test.cc`) and around the decimal point guard
-(`test/locale_test.cc`).
+of the four rounding modes (`test/rounding_test.cc`), around the decimal point guard
+(`test/locale_test.cc`), and the exact path (`test/slow_test.cc`) on exact halfway points
+and thresholds with expected values that come from no libc, and on which texts reach libc.
 
 **The decimal point.** `strtod` reads the locale's decimal point, so in a locale where it
 is `,`, `strict_stod("1.5")` is `1` plus trailing text. The fast path keeps that: it asks
@@ -120,6 +129,31 @@ query (above).
 | `stof`, short | 22.6 | **17.5** | 20.2 |
 | `stof`, 9 digits | 20.4 | **16.7** | 18.0 |
 | `stof`, 25-40 digits | 77.6 | 69.6 | **68.3** |
+
+Text the table cannot decide (an exact halfway point) and text `strtod` answers with `ERANGE`
+(subnormal, overflow, underflow), converted by the exact path. "Before" is the same text
+through `strtod`, which is what these took until the exact path. `fast_float` is faster
+here: its second table makes a halfway point cheap. Same conditions as above; the M4 column is
+the minimum of four runs, the i9 column the mean of eight:
+
+| workload | strict-stox | before (`strtod`) | `fast_float` |
+|---|---|---|---|
+| **Apple M4 Pro** | | | |
+| `stod`, exact halfway points (`2^52..2^53 + .5`) | 18.8 | 58.0 | 7.3 |
+| `stod`, odd integers `2^53..2^54` (halfway points) | 16.5 | 21.5 | 7.6 |
+| `stod`, subnormal | 18.4 | 26.6 | 9.1 |
+| `stod`, overflow and underflow | 22.0 | 30.5 | 10.3 |
+| `stof`, odd integers `2^24..2^25` (halfway points) | 12.2 | 34.2 | 5.7 |
+| `stof`, subnormal | 18.4 | 63.3 | 8.7 |
+| `stof`, overflow | 17.3 | 26.4 | 11.3 |
+| **Intel i9-9980HK** | | | |
+| `stod`, exact halfway points (`2^52..2^53 + .5`) | 43.3 | 128.1 | 18.8 |
+| `stod`, odd integers `2^53..2^54` (halfway points) | 36.8 | 42.8 | 17.6 |
+| `stod`, subnormal | 48.7 | 66.6 | 21.5 |
+| `stod`, overflow and underflow | 46.8 | 60.5 | 21.1 |
+| `stof`, odd integers `2^24..2^25` (halfway points) | 32.4 | 73.6 | 13.9 |
+| `stof`, subnormal | 46.5 | 151.4 | 21.8 |
+| `stof`, overflow | 42.4 | 60.1 | 23.2 |
 
 Integers, Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
 (mean of two runs under `quiet strict`; each run is the best of 9 samples over a pool of

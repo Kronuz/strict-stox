@@ -4,6 +4,114 @@ All notable changes to this library. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The library has no
 release tags yet, so entries are dated.
 
+## 2026-11-01
+
+### Added
+
+- **An exact path for decimal `stod` and `stof` text, so libc is reached only for what it alone
+  defines.** `fast_fp` declined every text its 64-bit table could not decide (about one 17 digit
+  text in a thousand) and every subnormal, zero or infinite result, and `strtod` took them.
+  `fp_slow` now converts them after `fast_fp` declines, with the method of the slow path of
+  Lemire's "Number Parsing at a Gigabyte per Second": the exact decimal value is compared with
+  the halfway point between two floats. The table gives a mantissa the rounded value cannot be
+  below (the product is a lower bound, within 2^-59 of the value); one exact comparison decides
+  whether the result is that mantissa or the next, and a tie goes to the even one. Texts of at
+  most 19 digits with `|q| <= 27` are compared in 128 bits, the others in fixed 48-limb big
+  integers; a text of more than 768 significant digits keeps the first 768 and a final digit 1
+  (a halfway point has at most 767 digits, so none lies between the two). A result below the
+  point where it rounds up to the smallest normal value is `ERANGE` without arithmetic unless it
+  could be exactly representable, which needs `5^-q` to divide the digits, so 713 digits or more
+  for a `double` (86 for a `float`); the rest is divided. `fast_fp` is untouched: its generated
+  code is identical to the previous header's (clang 17 and 21 on arm64 and x86_64, instruction
+  streams compared with labels and numbers stripped).
+
+  What still reaches libc, besides what is not decimal text (hex floats, `inf`, `nan`, whitespace,
+  `+`, trailing text), a rounding mode other than to-nearest and a decimal point other than `.`:
+  an exactly representable subnormal, and a text that rounds up from below the subnormal range
+  into the smallest normal value, the two results whose `errno` differs between libcs (glibc sets
+  `ERANGE` for a subnormal only if it is inexact, Apple's libc for every one). `ERANGE` for an
+  inexact subnormal, an overflow and a zero from a non-zero text is the same on glibc, Apple's
+  libc and FreeBSD's (but see Known issues).
+
+  `test/slow_test.cc` is built with `-DSTRICT_STOX_COUNT_LIBC`, which makes `stod` and `stof` call
+  a counting wrapper of libc, and checks: a table of cases with expected values from exact
+  rational arithmetic (`tools/slow_cases.py`, no libc, Apple's abort text among them, which must
+  not reach libc); the exact halfway point of neighbouring floats (built with the test's own
+  big-integer routine) with tails of digits added or taken so the text lies just above or below;
+  all 2,300 binade boundaries; the subnormal threshold with texts of 18 to 700 digits; exactly
+  representable subnormals; random text of every length and exponent with `fp_slow` computed
+  with and without the table and against libc; `cmp_small` against `cmp_scaled`; and that libc is
+  reached only for the cases above. `tools/fp_mutants.py` has 112 mutants (61 for the exact
+  path), all killed; two survivors of the first run were a branch that only a direct call can
+  reach and a renormalisation that cannot matter (removed, with the argument in a comment), and
+  a third (the margin around the rounding threshold) needed texts of 18 to 700 digits just
+  below and above it.
+  `test/locale_test.cc` now tests the decimal point guard of `fp_slow` too. `bench/bench.cc` has
+  rows for the new path (exact halfway points, subnormal, overflow and underflow).
+
+  ns per element, `bench/bench.cc` with the previous header and the new one each the only header of
+  its binary (alternating runs, `quiet strict`, Apple clang `-O3`; the minimum of four runs on the
+  M4 and the M1, the mean of eight on the i9). "Before" is the same text through `strtod`:
+
+  | workload | M4 before | M4 now | M1 before | M1 now | i9 before | i9 now |
+  |---|---|---|---|---|---|---|
+  | `stod`, exact halfway points (`2^52..2^53 + .5`) | 58.0 | 18.8 | 81.2 | 27.2 | 128.1 | 43.3 |
+  | `stod`, odd integers `2^53..2^54` (halfway points) | 21.5 | 16.5 | 28.6 | 24.4 | 42.8 | 36.8 |
+  | `stod`, subnormal | 26.6 | 18.4 | 45.8 | 31.8 | 66.6 | 48.7 |
+  | `stod`, overflow and underflow | 30.5 | 22.0 | 49.1 | 33.4 | 60.5 | 46.8 |
+  | `stof`, odd integers `2^24..2^25` (halfway points) | 34.2 | 12.2 | 52.2 | 17.8 | 73.6 | 32.4 |
+  | `stof`, subnormal | 63.3 | 18.4 | 97.7 | 30.6 | 151.4 | 46.5 |
+  | `stof`, overflow | 26.4 | 17.3 | 44.6 | 29.3 | 60.1 | 42.4 |
+
+  The first form of the exact path built big integers for every text it decided and was slower
+  than `strtod` on the new rows (428 ns for `stod` of subnormal text against 27, on the M4; 36
+  against 21 for the odd integers); deciding from the table first, comparing in 128 bits and
+  reading a short text once more with the eight-byte loads gave the figures above. The rows that
+  were there before are unchanged within the spread (M4 -1.9% to +2.4%, M1 -1.4% to +3.2%, i9
+  -13.6% to +4.1% on a shared host); `stod` of 800 digits is 8% to 12% faster, because its rare
+  ambiguous texts no longer go to `strtod`. On the i9 two rows (`1.5e-7`-like and the shortest
+  representations) stay about 4% slower in every run, inside that host's spread between identical
+  binaries. Their `fast_fp` code is instruction for instruction the previous one; the wrapper around
+  it is larger now that `_fast` has three results, and Apple clang no longer inlines
+  `stox_nothrow` into the entry points. Moving the `strto*` fallback out of line restored the inlining and measured
+  no better on the M4, so it was not kept. `fast_float` is faster on the new rows (5.7 to 11.3 ns on
+  the M4): its second table makes a halfway point cheap.
+
+  Verified with an independent harness (not part of the repository's tests): for every text, `stod`
+  and `stof` (nothrow with and without `idx`, and the throwing form) against libc, `std::from_chars`
+  where the platform has it and `fast_float`; a separate phase of each run repeats the random texts under each of the four rounding
+  modes; and the exact path against itself with and without the table. The texts: random doubles and floats in 17 formats, random
+  digit strings with all exponents, long mantissas, the exact halfway point between neighbouring doubles
+  and floats, every short string over the syntax alphabet, and a stride through all float32's shortest, 9 and 17
+  digit texts and their midpoints. No mismatch on any of: Linux x86_64 and arm64 (GitHub, glibc 2.39, GCC 13), 2.3 billion
+  texts each; the VM (glibc 2.35, GCC 11, libstdc++ 11), 1.8 billion; macOS 15 on arm64 and on Intel (Apple libc), 1.05 billion each;
+  and the i9 (macOS 15, LLVM 23 with libc++'s `std::from_chars`), 1.87 billion. Apple's `strtod` aborted
+  on 53 of the arm64 texts and 65 of the Intel texts (trapped by the harness); the API did not reach libc for
+  any of them. A shorter run behind the last refactor (the result handling out of line) covers hundreds of
+  millions of texts on each of the four GitHub platforms, also without a mismatch.
+
+### Changed
+
+- `Stox::_fast` returns 0 (take the `strto*` path), 1 (the value) or 2 (`ERANGE`). On 2 the nothrow
+  forms return 0 and store `ERANGE` without touching `idx`, and the throwing forms throw
+  `std::out_of_range` with the same text, as the `strto*` path does.
+
+### Fixed
+
+- **Apple's libc no longer aborts on decimal text that the fast path declined.** The abort
+  (`divideMPByMP`, `strtofp.c:1390`, macOS 15.7, 15.8 and 26.7) needs a text that reaches `strtod`;
+  decimal text no longer does, except an exactly representable subnormal. The text
+  `99004559013337762701442583720290300000000000.00000000000000` is a test case that must not reach
+  libc. The 19 and 34 texts (of 340 and 102 million) on which Apple's `strtod` aborted in the
+  macOS arm64 verification run were all converted without it.
+
+### Known issues
+
+- FreeBSD's `strtof` returns the smallest normal value (1.17549435e-38) with no `errno` for some
+  texts between two subnormal floats (for example near 2.1e-44 and 4.9e-44). `stof` of those
+  texts used to return that value on FreeBSD; it now gives `ERANGE`, which is right.
+  `test/slow_test.cc` counts such texts as libc bugs instead of mismatches.
+
 ## 2026-10-31
 
 ### Documentation
