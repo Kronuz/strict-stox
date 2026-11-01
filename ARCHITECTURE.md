@@ -45,11 +45,15 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
 
 - integers (`stoi`, `stou`, `stol`, `stoul`, `stoll`, `stoull`, `stoz`): an optional
   `-` (signed types only), then digits of the requested base 2..36, the whole input,
-  1..63 bytes, no overflow of the function's own type. Whitespace, `+`, `0x`/octal
-  prefixes, base 0 and invalid bases, trailing text, an embedded NUL, `-` on an
-  unsigned function (`strtoul("-1")` wraps) and every overflow take the `strto*`
-  path. A value outside the narrower target type (`stoi` of 3000000000) also takes
-  it, so `ERANGE` always comes from one place;
+  1..63 bytes. Whitespace, `+`, `0x`/octal prefixes, base 0 and invalid bases,
+  trailing text, an embedded NUL and `-` on an unsigned function (`strtoul("-1")`
+  wraps) take the `strto*` path. A value that leaves the range of the function's own
+  type (`strtoll` and the like: 64 bits) is `ERANGE` decided in the loop: the digits
+  read so far are valid ones, `strto*` reads the same digits, and its `errno` comes
+  first whatever follows them, so the caller gets 0, `ERANGE` and an untouched `idx`
+  without a copy of the text (`fast_int` returns 2). A value outside the narrower
+  target type (`stoi` of 3000000000) and a text that goes on with a non-digit after
+  leaving the signed range take the `strto*` path;
 - `stof`/`stod`: `[-]digits[.digits][e[+-]digits]` of any length. The text is reduced to
   `w * 10^q` (`w` the first 19 significant digits) and converted by a table-driven
   Clinger / Eisel-Lemire algorithm (below); what the table cannot decide is converted
@@ -57,8 +61,10 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
   except two results whose `errno` differs between libcs (an exactly representable
   subnormal, and a text that rounds up from below the subnormal range into the smallest
   normal value). `inf`, `nan`, hex floats, whitespace, `+`, trailing text, a locale whose
-  decimal point is not `.` and a non-default rounding mode take the `strto*` path.
-  `stold` has no fast path;
+  decimal point is not `.` and a non-default rounding mode take the `strto*` path. A text
+  whose first significant byte (after one `-`) is not a digit or `.` is declined by
+  `fast_fp` and by the exact path alike, so after `fast_fp` declines it, `starts_decimal`
+  sends it straight to `strto*` without entering `fp_decline`. `stold` has no fast path;
 - the fast path applies only when the function is exactly `std::strtol` etc.; a
   `Stox` built around a custom function keeps its own semantics.
 
@@ -133,6 +139,10 @@ value) or 2 (`ERANGE`: the API returns 0 and sets the error, `idx` untouched, as
    `D + 1` unit of the 768th digit, and the value is on the same side of every halfway point
    as before. The leading digits' decimal exponent `lg = q + digits` decides at once
    what is certainly infinity (`lg - 1 >= 309`, 39 for `float`) or zero (`lg <= -324`, -46).
+   A text of at most 19 digits whose value is an integer (`q` is 0 after the fraction digits are
+   counted: `9007199254740993`, `12e0`, `1.2e1`) is below 2^64, and one correctly rounded
+   conversion of a 64-bit integer gives the result, a tie going to the even mantissa. This is
+   where the exact halfway points of the integers from 2^53 on end, which the table declines.
 2. **A candidate from the table.** The first 19 digits and the `5^q` table give a
    product `P` that is below the value by less than `2^-59` of itself. In the normal range
    that is a mantissa `m0` that the rounded result is at, or one unit above (a unit is
@@ -179,7 +189,7 @@ own big-integer routine) with tails of digits added or taken so the text lies ju
 below, every binade boundary, the exactly representable subnormals, random text of every length
 and exponent with the two variants of the exact path (with and without the table) compared
 against each other and against libc, `cmp_small` against `cmp_scaled`, and that libc is reached
-only for the cases above. `tools/fp_mutants.py` breaks the implementation in 112 deliberate
+only for the cases above. `tools/fp_mutants.py` breaks the implementation in 127 deliberate
 ways and requires each to fail the tests; the rounding, locale and exact path mutants must fail
 their own test.
 

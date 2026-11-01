@@ -15,11 +15,11 @@ test/long_test.cc            Inputs of any length against libc strto* and std::f
 test/fp_test.cc              The floating point fast path against libc strtod/strtof and std::from_chars: table vs big integers, hard cases, exact halfway points, random text; `--stress N`, `--f32` for the long runs.
 test/rounding_test.cc        strict_stod/stof under all four rounding modes (fesetround) against libc, one thread per mode, and values derived by hand.
 test/locale_test.cc          The decimal point guard (of fast_fp and fp_slow): a mock decimal point (always runs) and a real comma locale, global and per thread (runs where one is installed).
-test/slow_test.cc            The exact decimal path (fp_slow), built with -DSTRICT_STOX_COUNT_LIBC: curated and constructed cases with expected values that come from no libc, exact halfway points, binade boundaries, exact subnormals, random text, and that libc is reached only for what it must decide.
+test/slow_test.cc            The exact decimal path (fp_slow), built with -DSTRICT_STOX_COUNT_LIBC: curated and constructed cases with expected values that come from no libc, exact halfway points, binade boundaries, exact subnormals, random text, that libc is reached only for what it must decide, which texts go to strto* by their first byte, and that an integer out of range is decided without strto*.
 test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the tests above.
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
 tools/slow_cases.py          Expected results for the curated texts of test/slow_test.cc by exact rational arithmetic (round half to even): value bits, or ERANGE, or "libc decides".
-tools/fp_mutants.py          Breaks the fast and exact paths in 112 ways and requires the floating point tests to fail on each; the rounding, locale and exact path (slow_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
+tools/fp_mutants.py          Breaks the fast and exact paths, the first-byte route and the integer range in 127 ways and requires the tests to fail on each; the rounding, locale, exact path and route (slow_*) and integer range (int_range_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
 tools/verify.cc              Independent sweep of stod/stof against libc, std::from_chars, fast_float and the previous header (hard cases, halfway points, every float32, random text, rounding modes; own big integer and generators). Hours; not in ctest.
 tools/verify_chain.sh        The commands of verify.cc in sequence, one log each, at nice 19.
 tools/verify_mutants.py      Builds verify.cc against each mutant of fp_mutants.py and requires it to fail (except the decline-more and locale mutants, which only the repo's tests kill).
@@ -102,6 +102,18 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   (glibc: `ERANGE` only if inexact; Apple: always). Do not return `ERANGE` for those two.
   `test/slow_test.cc` counts the calls that reach libc (`-DSTRICT_STOX_COUNT_LIBC`, a seam
   for tests only) and fails if one is not among them.
+- **The route of a text is part of the contract, though not of the result.** After `fast_fp` declines, `starts_decimal`
+  (an optional `-`, then a digit or `.`) sends every other text straight to `strto*`, because `fast_fp` and `fp_slow` decline
+  those anyway and each try costs about a quarter of a `strtod` call. It must never send a text that `fp_slow` converts
+  (`.5`, `-.5`, a digit); `test/slow_test.cc` counts the entries into `fp_decline` and the calls of the `strto*` path
+  (`decline_calls`, `strto_calls`) and checks both directions for every first byte. An integer that leaves the range of
+  `strtol` and the like is `ERANGE` from `fast_int` (status 2) with no `strto*` call; text after the digits that left the
+  range does not matter, text after the digits of a value that is only too big for the signed range is left to `strto*`.
+- **A text of at most 19 digits that is an integer is converted by the cast of a 64-bit integer** (`fp_slow`: `q == 0` after
+  the fraction digits), not compared with the halfway point; the table declines the exact halfway points from 2^53, and
+  this is where they end. `fast_fp` is not touched for it: a branch there moved the short rows by 2% to 8%.
+- **`errno` is named once per call** (`int& err`): on macOS each spelling of it is a call to `__error()`, about a quarter of
+  a `strtod` call for the declined texts.
 - **The 5^q table is generated.** Edit `tools/gen_pow5.py`, run it with `--write`, and
   the `strict_stox_pow5_table` test (`--check`) keeps the header honest. The binary
   exponent is `(q * 217706) >> 16`; the generator proves it for every `q` in range.

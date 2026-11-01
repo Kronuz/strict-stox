@@ -721,7 +721,7 @@ static void test_integer_ties(std::mt19937_64& rng) {
 	for (const char* t : {"9223372036854775808", "9223372036854775809", "9999999999999999999", "18014398509481986", "16777217", "16777219", "33554434"}) { texts.push_back(t); }
 	const std::size_t base = texts.size();
 	for (std::size_t i = 0; i < base; ++i) {  // the same integers written with an exponent or a fraction
-		const std::string& t = texts[i];
+		const std::string t = texts[i];  // a copy: push_back moves the vector
 		if (t.size() < 19) { texts.push_back(t + "e0"); }
 		if (t.size() < 18) { texts.push_back(t + "0e-1"); }
 		if (t.size() > 3) { texts.push_back(t.substr(0, t.size() - 2) + "." + t.substr(t.size() - 2) + "e2"); }
