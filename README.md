@@ -104,12 +104,13 @@ Not for:
 - **Grouped or localized input.** `"1,000"` is an error. The decimal point follows
   the current locale, as in `strtod`: where it is `,`, `strict_stod("1.5")` fails. A
   program that stays in the `"C"` locale can build with `-DSTRICT_STOX_C_LOCALE=ON`
-  to skip the locale query (about 3 ns per call on the M4 Pro) and read `.` everywhere.
+  to skip the locale query (1.6 to 3 ns per call on the M4 Pro, 5 to 8 ns on the i9) and read
+  `.` everywhere.
 - **Text with an embedded NUL.** The number ends at the NUL, as it does for
   `strto*`.
 - **The fastest decimals.** `fast_float` parses short decimals in 6.4 ns against 8.9 for
-  strict-stox (`12345.678`, M4 Pro), and on exact ties, subnormals and overflow it is 1.3x to
-  3.5x faster than the exact path.
+  strict-stox (`12345.678`, M4 Pro; 13.5 against 21.2 on the i9), and on exact ties, subnormals
+  and overflow it is 1.3x to 3.5x faster than the exact path.
 
 ## ⚡ Performance
 
@@ -125,8 +126,8 @@ inputs each of them accepts bit for bit: libc returns the same value as strict-s
 strict-stox accepts, and `std::from_chars` and `fast_float` the same except for text outside their
 syntax (leading white space) and text that strict-stox reports an error on (out of range);
 `strict_stox_bench --check` runs the comparison. Apple clang 17, `-O3`, on an Apple M4 Pro (macOS
-26). Bold is the fastest implementation of a row (the C locale build is a mode of strict-stox, not
-counted).
+26) and an Intel Core i9-9980HK (macOS 15). Bold is the fastest implementation of a row (the C
+locale build is a mode of strict-stox, not counted).
 
 | Workload | strict-stox | C locale | libc | `std::from_chars` | `fast_float` |
 |---|---:|---:|---:|---:|---:|
@@ -136,6 +137,12 @@ counted).
 | `stod`, shortest repr (JSON) | 11.3 | 8.7 | 19.1 | 48.7 | **8.7** |
 | `stod`, 100 digits | **28.4** | 27.1 | 92.3 | 147.0 | 121.7 |
 | `stof`, 9 digits | 7.3 | 5.8 | 15.7 | 174.3 | **6.2** |
+| **Intel Core i9-9980HK** | | | | | |
+| `stod`, short (`12345.678`) | 21.2 | 14.6 | 29.9 | n/a | **13.5** |
+| `stod`, 17 digits (`%.17g`) | 27.0 | 20.5 | 41.5 | n/a | **19.4** |
+| `stod`, shortest repr (JSON) | 33.8 | 25.3 | 55.4 | n/a | **21.9** |
+| `stod`, 100 digits | **78.8** | 71.7 | 145.8 | n/a | 164.2 |
+| `stof`, 9 digits | 21.5 | 16.9 | 31.6 | n/a | **18.2** |
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON
