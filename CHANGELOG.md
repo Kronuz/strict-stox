@@ -129,6 +129,14 @@ release tags yet, so entries are dated.
   12.2, 17 digits 25.6 -> 25.2, 17 digits with any exponent 30.4 -> 31.4 with an A/A spread of
   3%, `stof` short 22.6 -> 22.6).
 
+  On the Apple M1 Pro (Apple clang 21), 199e0be and the new header as the only header of
+  separate binaries, three runs: rows of 17 digits and fewer -7.9% to +0.9% (`stod` short 13.0 -> 13.0,
+  17 digits 17.7 -> 17.9, `stof` short 15.6 -> 15.7); with `STRICT_STOX_C_LOCALE` -11.7% to +0.0%, except
+  `stof` short +6.2% (12.3 -> 13.1 ns; the three runs of that row spread from 12.1 to 13.9 ns, its A/A
+  is 10%, and the same row of the default build is +0.4% with an A/A of 0.1%). Long rows
+  25-40 digits 91.5 -> 35.1 ns (`fast_float` 46.2), 100 digits 249.7 -> 49.0 (57.0), 800 digits
+  1,953 -> 227 (193), `stof` 25-40 digits 102.6 -> 43.8 (45.8).
+
   An earlier form of this change (`d611a3a`) passed the integer and fraction runs from
   `fast_fp` to `fp_long`. That added two live values to `fast_fp`, its code changed on x86_64,
   and the i9 measured several short rows 3% to 17% slower in the same process as 199e0be
