@@ -94,6 +94,8 @@ the classic hard cases and random text (`test/fp_test.cc`, `tools/fp_mutants.py`
 of the four rounding modes (`test/rounding_test.cc`), around the decimal point guard
 (`test/locale_test.cc`), and the exact path (`test/slow_test.cc`) on exact halfway points
 and thresholds with expected values that come from no libc, and on which texts reach libc.
+`tools/verify.cc` is the long sweep (billions of texts against libc, `std::from_chars` and `fast_float`; not part of
+`ctest`), and `tools/verify_mutants.py` checks that it catches the planted bugs of `tools/fp_mutants.py`.
 
 **The decimal point.** `strtod` reads the locale's decimal point, so in a locale where it
 is `,`, `strict_stod("1.5")` is `1` plus trailing text. The fast path keeps that: it asks
@@ -102,7 +104,7 @@ program that never leaves the `"C"` locale can skip the question with
 `-DSTRICT_STOX_C_LOCALE` (CMake: `-DSTRICT_STOX_C_LOCALE=ON`): plain decimals are then
 read with `.` in every locale. Both columns are below.
 
-Floating point, ns per element, best of 9 under `quiet strict`, `-O3`, Apple clang 17,
+Floating point, ns per element, best of 9 with one measurement at a time on the host, `-O3`, Apple clang 17,
 mean of two runs (one for the Intel C locale column). `fast_float` moves by up to 10%
 between builds, so its best result is shown. The C locale column skips the decimal point
 query (above).
@@ -155,8 +157,26 @@ the minimum of four runs, the i9 column the mean of eight:
 | `stof`, subnormal | 46.5 | 151.4 | 21.8 |
 | `stof`, overflow | 42.4 | 60.1 | 23.2 |
 
+Text the fast path declines or that fails, and text at the top of the range. The first column is the frozen
+header that sends every text to `strto*` (`test/strict_stox_old.hh`), so a declined text pays the attempt
+on top of `strtod`: 4 to 5 ns on the M4 Pro and 9 to 11 ns on the i9 for leading white space, `inf` and `nan`.
+One measurement at a time on the host, one run, spread between two runs of the new column 0% to 7% (the
+`stoll` 20 digit row on the i9, 10%):
+
+| workload | M4 Pro: `strto*` only / strict-stox | i9-9980HK: `strto*` only / strict-stox |
+|---|---:|---:|
+| `stoll`, `" 42"` (white space) | 16.8 / 15.0 | 40.6 / 39.7 |
+| `stoll`, `"abc"` (`EINVAL`) | 12.4 / 10.4 | 28.6 / 24.5 |
+| `stoll`, 20 digits (`ERANGE`) | 28.1 / 32.6 | 66.3 / 75.9 |
+| `stod`, `" 1.5"` (white space) | 19.0 / 23.7 | 42.1 / 50.8 |
+| `stod`, `inf` and `nan` | 17.4 / 21.6 | 30.9 / 41.1 |
+| `stod`, near `DBL_MAX` | 24.6 / 10.2 | 54.8 / 28.2 |
+| `stof`, `" 1.5"` (white space) | 20.1 / 23.9 | 47.3 / 55.9 |
+| `stof`, `inf` and `nan` | 16.9 / 21.9 | 32.0 / 43.2 |
+| `stof`, near `FLT_MAX` | 20.4 / 9.4 | 47.6 / 26.1 |
+
 Integers, Apple M4 Pro, Apple clang 17 with `-O3 -DNDEBUG -std=gnu++20`, ns per element
-(mean of two runs under `quiet strict`; each run is the best of 9 samples over a pool of
+(mean of two runs, one measurement at a time on the host; each run is the best of 9 samples over a pool of
 1024 inputs):
 
 | workload | strict-stox | `std::from_chars` |
@@ -185,6 +205,7 @@ the share of a row's inputs that the fast path takes: a row whose inputs mostly 
 
 - [docs/API.md](docs/API.md): the functions, `idx`, and the no-throw form.
 - [ARCHITECTURE.md](ARCHITECTURE.md): how the wrappers are generated.
+- [docs/perf/verification.md](docs/perf/verification.md): the independent harness (`tools/verify.cc`) and what has run through it.
 - [AGENTS.md](AGENTS.md): repository map and traps.
 - [CHANGELOG.md](CHANGELOG.md): what changed, and when.
 

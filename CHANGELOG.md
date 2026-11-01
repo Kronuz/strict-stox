@@ -8,6 +8,17 @@ release tags yet, so entries are dated.
 
 ### Added
 
+- **The independent harness and its record.** `tools/verify.cc` (checks `stod` and `stof` against libc,
+  `std::from_chars`, `fast_float` and the previous header, in all four rounding modes, on texts of 17
+  formats, exact halfway points, every `float` and every short syntax string), `tools/verify_chain.sh`
+  (the commands in sequence), `tools/verify_mutants.py` (does the harness catch the mutants of
+  `tools/fp_mutants.py`) and `.github/workflows/verify.yml` (the sweeps and the mutation check on four
+  platforms, started by hand). `docs/perf/verification.md` records what has run: 0 mismatches over about
+  2.3 billion texts on each Linux runner, 1.05 billion on each macOS runner, and 112 of 112 mutants killed.
+- `bench/bench.cc` has rows for input that never takes the fast path or sits at the edge: integer text with white
+  space, a sign, a prefix, base 0, no digits and an out-of-range value, and `stod` / `stof` of text with white space,
+  `inf` and `nan`, and values near `DBL_MAX` and `FLT_MAX`.
+- In the tables below, M4 is the Apple M4 Pro, M1 the Apple M1 Pro and i9 the Intel Core i9-9980HK.
 - **An exact path for decimal `stod` and `stof` text, so libc is reached only for what it alone
   defines.** `fast_fp` declined every text its 64-bit table could not decide (about one 17 digit
   text in a thousand) and every subnormal, zero or infinite result, and `strtod` took them.
@@ -50,7 +61,7 @@ release tags yet, so entries are dated.
   rows for the new path (exact halfway points, subnormal, overflow and underflow).
 
   ns per element, `bench/bench.cc` with the previous header and the new one each the only header of
-  its binary (alternating runs, `quiet strict`, Apple clang `-O3`; the minimum of four runs on the
+  its binary (alternating runs, one measurement at a time on the host, Apple clang `-O3`; the minimum of four runs on the
   M4 and the M1, the mean of eight on the i9). "Before" is the same text through `strtod`:
 
   | workload | M4 before | M4 now | M1 before | M1 now | i9 before | i9 now |
@@ -77,7 +88,7 @@ release tags yet, so entries are dated.
   no better on the M4, so it was not kept. `fast_float` is faster on the new rows (5.7 to 11.3 ns on
   the M4): its second table makes a halfway point cheap.
 
-  Verified with an independent harness (not part of the repository's tests): for every text, `stod`
+  Verified with `tools/verify.cc`, an independent harness that is not part of ctest (`docs/perf/verification.md` has the runs): for every text, `stod`
   and `stof` (nothrow with and without `idx`, and the throwing form) against libc, `std::from_chars`
   where the platform has it and `fast_float`; a separate phase of each run repeats the random texts under each of the four rounding
   modes; and the exact path against itself with and without the table. The texts: random doubles and floats in 17 formats, random
@@ -155,7 +166,7 @@ release tags yet, so entries are dated.
   shortest and as 17 digit text, parsed as `float` and as `double` on glibc (12.8G and 8.6G
   checks, 99.6% and 99.98% taken by the fast path).
 
-  Floating point, ns per element (Apple M4 Pro / Intel i9-9980HK, `quiet strict`, `-O3`,
+  Floating point, ns per element (Apple M4 Pro / Intel i9-9980HK, one measurement at a time on the host, `-O3`,
   before this change, then now with the locale check, then without it, and `fast_float`):
 
   | workload | before | now | now, `STRICT_STOX_C_LOCALE` | `fast_float` |
@@ -219,7 +230,7 @@ release tags yet, so entries are dated.
   the same bits.
 
   ns per element, `bench/bench.cc` with 199e0be as "before" in the same process, Apple M4 Pro
-  (Apple clang 17 `-O3`, `quiet strict`, mean of two runs of best of 9; `fast_float` best result),
+  (Apple clang 17 `-O3`, one measurement at a time on the host, mean of two runs of best of 9; `fast_float` best result),
   and Intel i9-9980HK (the same compiler, 199e0be and the new header each the only
   header of its binary, mean of two runs):
 
@@ -264,8 +275,7 @@ release tags yet, so entries are dated.
   path takes (a reader with a window of 18 digits, or that counts leading zeros as
   digits, declines more, which no correctness test can see; the share is 99.7% to 100%).
 
-  Long runs, all with 0 mismatches: a harness outside the repository (`campaign/audit/stox-fixround`
-  in the campaign tree) checks every text against libc `strtod`/`strtof` (bits, `errno`, end
+  Long runs, all with 0 mismatches: `tools/verify.cc` checks every text against libc `strtod`/`strtof` (bits, `errno`, end
   pointer, `idx`, the throwing form, in all four rounding modes), `std::from_chars`, `fast_float`
   and the previous header's `fast_fp` (same take or decline, same bits). On Linux arm64
   (glibc 2.39, g++ 13), for 199e0be and the `d611a3a` form: every positive float32 as shortest,
