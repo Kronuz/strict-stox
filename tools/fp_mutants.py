@@ -2,8 +2,10 @@
 """Mutation check for the floating point fast path.
 
 For each mutant: copy strict_stox.hh with one deliberate bug into a scratch dir, build
-test/fp_test.cc against it and require that the test FAILS. A mutant that survives means
-the test would not catch that bug.
+the floating point tests against it (test/fp_test.cc, test/rounding_test.cc and the mock build of
+test/locale_test.cc) and require that at least one FAILS. A mutant that survives means the tests
+would not catch that bug. Some mutants name the test that has to kill them (REQUIRED_KILLER): the
+locale guard must not depend on an installed comma locale, which fp_test uses when there is one.
 
 usage: tools/fp_mutants.py TREE_DIR [CXX] [only-name ...]     (scratch dir: $MUT_DIR or a temp dir)
 """
@@ -55,8 +57,12 @@ MUTANTS = {
     "neg_q_index": ("mul64(w << lz, pow5_tab[q - pow5_qmin], hi, lo);", "mul64(w << lz, pow5_tab[q - pow5_qmin + (q == -1 ? 1 : 0)], hi, lo);"),
     # locale check dropped
     "no_locale": ("if (dot && !decimal_point_is_dot()) { return false; }", ""),
-    # rounding mode check dropped
+    # rounding mode check dropped, or only for negative text (the first form of the bug)
     "no_rounding_guard": ("if (!rounds_to_nearest()) { return false; }", ""),
+    "rounding_guard_neg_only": ("if (!rounds_to_nearest()) { return false; }", "if (neg && !rounds_to_nearest()) { return false; }"),
+    # the decimal point is only looked at in its first byte, or asked for texts without a dot as well
+    "locale_first_byte_only": ("return dp[0] == '.' && dp[1] == '\\0';", "return dp[0] == '.';"),
+    "locale_always_checked": ("if (dot && !decimal_point_is_dot()) { return false; }", "if (!decimal_point_is_dot()) { return false; }"),
     # negative zero lost
     "neg_zero": ("b |= static_cast<bits_t>(neg) << (sizeof(bits_t) * 8 - 1);", "if (b != 0) { b |= static_cast<bits_t>(neg) << (sizeof(bits_t) * 8 - 1); }"),
     # exponent digits: junk after exponent accepted
@@ -85,6 +91,21 @@ MUTANTS = {
     "exp_clamp": ("ex = ex < 100000 ? ex * 10 + static_cast<std::ptrdiff_t>(d) : std::numeric_limits<std::ptrdiff_t>::max() / 4;", "ex = ex < 100000 ? ex * 10 + static_cast<std::ptrdiff_t>(d) : ex;"),
 }
 
+# The tests every mutant is built against: name -> (source, extra flags).
+TESTS = {
+    "fp_test": ("fp_test.cc", []),
+    "rounding_test": ("rounding_test.cc", []),
+    "locale_mock_test": ("locale_test.cc", ["-DLOCALE_TEST_MOCK=1"]),
+}
+# Mutants that one named test has to kill by itself.
+REQUIRED_KILLER = {
+    "no_rounding_guard": "rounding_test",
+    "rounding_guard_neg_only": "rounding_test",
+    "no_locale": "locale_mock_test",
+    "locale_first_byte_only": "locale_mock_test",
+    "locale_always_checked": "locale_mock_test",
+}
+
 work = os.environ.get("MUT_DIR") or tempfile.mkdtemp(prefix="stox-mut-")
 os.makedirs(work, exist_ok=True)
 survived = []
@@ -99,18 +120,31 @@ for name, (old, new) in MUTANTS.items():
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     open(os.path.join(d, "strict_stox.hh"), "w", encoding="utf-8").write(src.replace(old, new, 1))
-    exe = os.path.join(d, "fp")
-    r = subprocess.run([cxx, "-std=c++20", "-O1", "-Wno-ignored-attributes", "-I" + d, "-I" + os.path.join(tree, "test"), os.path.join(tree, "test", "fp_test.cc"), "-o", exe, "-pthread"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print("%-24s BUILD FAILED: %s" % (name, r.stderr[:300]))
+    killers = []
+    first = ""
+    broken = False
+    want = REQUIRED_KILLER.get(name)
+    # A mutant with a named killer is run against that test alone; any other mutant against each test in turn, until one fails.
+    for tname in ([want] if want else list(TESTS)):
+        srcfile, flags = TESTS[tname]
+        exe = os.path.join(d, tname)
+        r = subprocess.run([cxx, "-std=c++20", "-O1", "-Wno-ignored-attributes", "-I" + d, "-I" + os.path.join(tree, "test"), *flags, os.path.join(tree, "test", srcfile), "-o", exe, "-pthread"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print("%-24s BUILD FAILED (%s): %s" % (name, tname, r.stderr[:300]))
+            broken = True
+            break
+        t = subprocess.run([exe], capture_output=True, text=True, cwd=d)
+        if t.returncode != 0:
+            killers.append(tname)
+            first = ([l for l in t.stderr.splitlines() if l] or [""])[0][:90]
+            break
+    if broken:
         survived.append(name + "(build)")
         continue
-    t = subprocess.run([exe], capture_output=True, text=True, cwd=d)
-    killed = t.returncode != 0
-    first = [l for l in t.stderr.splitlines() if l][:1]
-    print("%-24s %s %s" % (name, "KILLED  " if killed else "SURVIVED", first[0][:100] if first else ""))
-    if not killed:
+    ok = bool(killers)
+    print("%-26s %s %s %s" % (name, "KILLED  " if ok else "SURVIVED", ",".join(killers) or "-", first))
+    if not ok:
         survived.append(name)
     sys.stdout.flush()
 print("survivors:", survived if survived else "none")

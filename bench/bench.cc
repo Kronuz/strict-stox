@@ -9,6 +9,7 @@
 // Build with -DSTRICT_STOX_BUILD_BENCH=ON. Best of 9 samples, ns per element over a
 // pool of 1024 inputs; "new A/A" repeats the new measurement in the same process,
 // and the percentage is its distance from the first one (the noise floor).
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -169,7 +170,26 @@ int main(int argc, char** argv) {
 		return std::string(b, r.ptr);
 	}));
 	fp_row<double>("stod 1.5e-7-like", fill([&] { return std::to_string(1 + rng() % 9) + "." + std::to_string(rng() % 100) + "e" + (rng() & 1 ? "-" : "+") + std::to_string(rng() % 30); }));
+	// Long mantissas: n random digits with a decimal point among the first 250 (so the value is in range:
+	// a result that overflows goes to strtod, which reports ERANGE) and, half the time, an exponent.
+	auto digits = [&](int lo, int hi) {
+		return [&, lo, hi] {
+			std::string t;
+			const int n = lo + static_cast<int>(rng() % static_cast<unsigned>(hi - lo + 1));
+			const int dot = 1 + static_cast<int>(rng() % static_cast<unsigned>(std::min(n, 250)));
+			for (int i = 0; i < n; ++i) {
+				if (i == dot) { t += '.'; }
+				t += static_cast<char>('0' + (i == 0 ? 1 + rng() % 9 : rng() % 10));
+			}
+			if (rng() & 1) { t += "e" + std::to_string(static_cast<int>(rng() % 60) - 30); }
+			return t;
+		};
+	};
+	fp_row<double>("stod 25-40 digits", fill(digits(25, 40)));
+	fp_row<double>("stod 100 digits", fill(digits(100, 100)));
+	fp_row<double>("stod 800 digits", fill(digits(800, 800)));
 	fp_row<float>("stof 1.234-like (short)", fill([&] { return std::to_string(rng() % 100000) + "." + std::to_string(rng() % 1000); }));
 	fp_row<float>("stof 9 digits", fill([&] { return to_s(static_cast<float>(static_cast<double>(rng() % 100000000) / 7.0), "%.9g"); }));
+	fp_row<float>("stof 25-40 digits", fill(digits(25, 40)));
 	return 0;
 }

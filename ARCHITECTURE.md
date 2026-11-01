@@ -102,16 +102,21 @@ The conversions round to nearest. `strtod` follows the current rounding mode, so
 fast path is skipped when it is not to nearest (`rounds_to_nearest`, a volatile
 `1 + tiny == 1 - tiny` test). It is also skipped when the locale's decimal point is not
 `.` and the text has a `.`, because `strtod` would read `1.5` as `1` there. That test is
-a libc call (`std::localeconv`) that costs as much as parsing a short number, so a
-program that never leaves the C locale can define `STRICT_STOX_C_LOCALE` before
-including the header to read `.` without asking.
+a libc call (`nl_langinfo`, `localeconv` without `langinfo.h`; 3 ns on Apple silicon,
+5 ns on an Intel laptop) next to a parse of 6 to 20 ns, so a program that never leaves the
+C locale can define `STRICT_STOX_C_LOCALE` before including the header to read `.` without
+asking.
 
 `test/fp_test.cc` states the property the path must keep: whenever `fast_fp` accepts
 a text, `strtod` (`strtof`) returns the same bits with `errno` clear and consumes the
 whole text. It also checks the table against exact big-integer arithmetic, the hard
 cases, the exact halfway point of every binade, and random text in many formats
-against libc and `std::from_chars`; `tools/fp_mutants.py` breaks the implementation
-in 34 deliberate ways and requires each to fail the test.
+against libc and `std::from_chars`. `test/rounding_test.cc` runs the public API in each of
+the four rounding modes against libc, and `test/locale_test.cc` tests the decimal point guard
+with a mock decimal point (`STRICT_STOX_DECIMAL_POINT`, a seam for tests) and, where one is
+installed, a real comma locale. `tools/fp_mutants.py` breaks the implementation in 37
+deliberate ways and requires each to fail the tests; the rounding and locale mutants must
+fail their own test.
 
 ## The `STOXIFY` macros
 

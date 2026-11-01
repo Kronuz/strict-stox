@@ -59,6 +59,33 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   endif()
   add_test(NAME strict_stox_fp_portable COMMAND strict_stox_fp_portable_test)
 
+  # stod/stof under every rounding mode (fesetround), against libc: the fast path stands aside in all
+  # but the default mode.
+  add_executable(strict_stox_rounding_test test/rounding_test.cc)
+  target_link_libraries(strict_stox_rounding_test PRIVATE strict_stox)
+  if(Threads_FOUND)
+    target_link_libraries(strict_stox_rounding_test PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME strict_stox_rounding COMMAND strict_stox_rounding_test)
+
+  # The locale guard. The mock build overrides the decimal point the header sees (no installed locale
+  # needed); the real build runs where a comma locale is installed (STRICT_STOX_TEST_LOCALE names one) and
+  # says so when it skips. The C_LOCALE build checks the documented opt-out.
+  add_executable(strict_stox_locale_mock_test test/locale_test.cc)
+  target_compile_definitions(strict_stox_locale_mock_test PRIVATE LOCALE_TEST_MOCK=1)
+  target_link_libraries(strict_stox_locale_mock_test PRIVATE strict_stox)
+  add_test(NAME strict_stox_locale_mock COMMAND strict_stox_locale_mock_test)
+  add_executable(strict_stox_locale_c_test test/locale_test.cc)
+  target_compile_definitions(strict_stox_locale_c_test PRIVATE LOCALE_TEST_MOCK=1 STRICT_STOX_C_LOCALE=1)
+  target_link_libraries(strict_stox_locale_c_test PRIVATE strict_stox)
+  add_test(NAME strict_stox_locale_c COMMAND strict_stox_locale_c_test)
+  add_executable(strict_stox_locale_test test/locale_test.cc)
+  target_link_libraries(strict_stox_locale_test PRIVATE strict_stox)
+  if(Threads_FOUND)
+    target_link_libraries(strict_stox_locale_test PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME strict_stox_locale COMMAND strict_stox_locale_test)
+
   # The 5^q table in strict_stox.hh is generated: it must match tools/gen_pow5.py.
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)

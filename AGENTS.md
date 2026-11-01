@@ -13,10 +13,13 @@ test/test.cc                 Runnable smoke test: happy paths, throwing cases, n
 test/diff_test.cc            Differential test against test/strict_stox_old.hh, the frozen pre-fast-path header (never edit it).
 test/long_test.cc            Inputs of any length against libc strto* and std::from_chars.
 test/fp_test.cc              The floating point fast path against libc strtod/strtof and std::from_chars: table vs big integers, hard cases, exact halfway points, random text; `--stress N`, `--f32` for the long runs.
+test/rounding_test.cc        strict_stod/stof under all four rounding modes (fesetround) against libc, one thread per mode, and values derived by hand.
+test/locale_test.cc          The decimal point guard: a mock decimal point (always runs) and a real comma locale, global and per thread (runs where one is installed).
+test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the two tests above.
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
-tools/fp_mutants.py          Breaks the fast path in 34 ways and requires test/fp_test.cc to fail on each.
+tools/fp_mutants.py          Breaks the fast path in 37 ways and requires the floating point tests to fail on each; the rounding and locale mutants must fail their own test.
 bench/bench.cc               Benchmark vs the frozen header, std::from_chars, abseil and fast_float when installed (STRICT_STOX_BUILD_BENCH).
-CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_pow5_table`.
+CMakeLists.txt               INTERFACE library `strict_stox` (+ alias strict_stox::strict_stox); CTest tests `strict_stox`, `_diff`, `_long`, `_fp`, `_fp_portable`, `_rounding`, `_locale_mock`, `_locale_c`, `_locale`, `_pow5_table`.
 LICENSE                      MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                 Behavior and performance changes, dated.
 README.md                    What it is, install, quick start.
@@ -105,9 +108,12 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   return value / `errno_save`. Don't read the global `errno` after a call
   expecting the parse's value; use the `nothrow` overload's out-param.
 - **The decimal point is read from the locale, and that costs.** `strtod` honors
-  `LC_NUMERIC`, so the fast path asks `std::localeconv()` before it takes a text
-  with a `.` (3-14 ns, as much as the parse). `STRICT_STOX_C_LOCALE` removes the call
-  and makes plain decimals read `.` in every locale; leave it undefined by default.
+  `LC_NUMERIC`, so the fast path asks the C library (`nl_langinfo(RADIXCHAR)`, or
+  `std::localeconv()` without `langinfo.h`) before it takes a text with a `.` (3-14 ns, as
+  much as the parse). `STRICT_STOX_C_LOCALE` removes the call and makes plain decimals read
+  `.` in every locale; leave it undefined by default. `STRICT_STOX_DECIMAL_POINT` is a
+  seam for tests only: an expression for the decimal point string, so the guard is tested
+  on a machine with no comma locale (`test/locale_test.cc`); never define it in a program.
 - **The fast path assumes round-to-nearest.** It tests the rounding mode on every call
   (`rounds_to_nearest`) and declines otherwise, because `strtod` honors `fesetround`.
 

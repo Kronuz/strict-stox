@@ -82,7 +82,9 @@ else goes through `strto*`, with the same results, `errno` values, `idx` and exc
 
 `ctest` checks both paths against libc and the frozen previous header; the floating
 point path also against `std::from_chars`, on the exact halfway point of every binade,
-the classic hard cases and random text (`test/fp_test.cc`, `tools/fp_mutants.py`).
+the classic hard cases and random text (`test/fp_test.cc`, `tools/fp_mutants.py`), in each
+of the four rounding modes (`test/rounding_test.cc`) and around the decimal point guard
+(`test/locale_test.cc`).
 
 **The decimal point.** `strtod` reads the locale's decimal point, so in a locale where it
 is `,`, `strict_stod("1.5")` is `1` plus trailing text. The fast path keeps that: it asks

@@ -490,12 +490,16 @@ inline const char* scan_digits(const char* p, const char* const e, std::uint64_t
 // when the locale's decimal point is ".". The query is a libc call; nl_langinfo (POSIX) is a few
 // loads, localeconv fills a whole structure and costs two to three times as much. A program that
 // never leaves the "C" locale can define STRICT_STOX_C_LOCALE to skip it, and then plain decimals
-// are read with '.' whatever the locale says (strtod still decides the rest).
+// are read with '.' whatever the locale says (strtod still decides the rest). A test can define
+// STRICT_STOX_DECIMAL_POINT as an expression for the decimal point string, to run the check
+// without an installed locale.
 inline bool decimal_point_is_dot() noexcept {
 #ifdef STRICT_STOX_C_LOCALE
 	return true;
 #else
-#ifdef STRICT_STOX_HAVE_LANGINFO
+#if defined(STRICT_STOX_DECIMAL_POINT)
+	const char* const dp = STRICT_STOX_DECIMAL_POINT;
+#elif defined(STRICT_STOX_HAVE_LANGINFO)
 	const char* const dp = nl_langinfo(RADIXCHAR);
 #else
 	const char* const dp = std::localeconv()->decimal_point;

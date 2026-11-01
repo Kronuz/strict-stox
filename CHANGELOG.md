@@ -65,7 +65,32 @@ release tags yet, so entries are dated.
   `1.5` instead of `1` plus trailing text; everything `strtod` handles itself still
   follows the locale). It is off by default so behavior does not change.
 - `bench/bench.cc` has rows for `fast_float`, a "before" column (`-DHAVE_PREV`), `float`
-  rows, 17 digit and JSON-like rows and an A/A column.
+  rows, 17 digit and JSON-like rows, 25 to 800 digit rows and an A/A column.
+- **Tests for the rounding mode and the decimal point guard** (the audit of 2026-10-31
+  found both untested or covered by one case):
+  - `test/rounding_test.cc` (`strict_stox_rounding`) runs `strict_stod` / `strict_stof`
+    in each of the four rounding modes against libc (value bits, `errno`, `idx`, with and
+    without `idx`; 15,524 texts per mode, negative and positive, 17 digit, 9 digit,
+    long mantissas, range limits) and checks that a text taken by the fast path equals libc
+    in that mode. It requires libc to round differently from nearest on thousands of the
+    texts (so it fails if `fesetround` has no effect), the fast path to take 90% of the
+    texts in the default mode, five hand-derived values (`0.1`, `-0.1`, `-.10`, `0.3`,
+    `-0.3` as `double` and `float`, in every mode) and the mode to be per thread. The
+    fast path before `199e0be` rounded `|x|` and negated, which gave `-0.1` where libc
+    gives `-0.099999999999999991` in `FE_UPWARD`, in 2,358 of 30,012 random texts.
+  - `test/locale_test.cc` (`strict_stox_locale_mock`, `_locale_c`, `_locale`) tests the
+    guard without a comma locale installed: `STRICT_STOX_DECIMAL_POINT` is a macro for
+    tests only that replaces the `nl_langinfo` call by an expression, and the mock build
+    feeds it `.`, `,`, a two byte separator, `..`, `.,`, `.x` and an empty string. A text
+    with a `.` must be declined unless the decimal point is exactly `.`, a text without
+    one must be taken in every case, and with `STRICT_STOX_C_LOCALE` the `.` is read
+    whatever the decimal point is. Where a comma locale is installed (`de_DE`, `fr_FR`, or the
+    one in `STRICT_STOX_TEST_LOCALE`), `strict_stox_locale` also checks the global locale
+    and a thread's own locale (`uselocale`) against libc.
+  - `tools/fp_mutants.py` has three more mutants (37) and builds each against
+    the three tests; the rounding and locale mutants must be killed by their own test.
+    Before, deleting the locale check passed every test on a machine with no comma
+    locale.
 
 ### Changed
 
