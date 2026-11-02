@@ -27,9 +27,9 @@ anything else people type.
 - **Its own decimal parser.** Floats go through a table of powers of five, and
   what the table cannot decide through an exact big-integer comparison with the
   halfway point. libc's `strto*` decides the rest: trailing text, white space,
-  `+`, base prefixes, integer overflow, `inf`, `nan`, hex floats, `stold`, a
-  directed rounding mode, a locale whose decimal point is not `.`, and two
-  subnormal results whose `errno` differs between libcs.
+  `+`, base prefixes, a value outside the narrower target type, `inf`, `nan`,
+  hex floats, `stold`, a directed rounding mode, a locale whose decimal point is
+  not `.`, and two subnormal results whose `errno` differs between libcs.
 - **Checked against libc.** `ctest` compares both paths with libc and with the
   frozen previous header, and the floating point path also with
   `std::from_chars` and in all four rounding modes;
@@ -108,9 +108,9 @@ Not for:
   `.` everywhere.
 - **Text with an embedded NUL.** The number ends at the NUL, as it does for
   `strto*`.
-- **The fastest decimals.** `fast_float` parses short decimals in 6.4 ns against 8.9 for
-  strict-stox (`12345.678`, M4 Pro; 13.5 against 21.2 on the i9), and on exact ties, subnormals
-  and overflow it is 1.3x to 3.5x faster than the exact path.
+- **The fastest decimals.** `fast_float` parses short decimals in 6.4 ns against 8.8 for
+  strict-stox (`12345.678`, M4 Pro; 13.8 against 20.8 on the i9), and on exact ties, subnormals
+  and overflow it is 1.3x to 3.4x faster than the exact path.
 
 ## ⚡ Performance
 
@@ -132,17 +132,17 @@ locale build is a mode of strict-stox, not counted).
 | Workload | strict-stox | C locale | libc | `std::from_chars` | `fast_float` |
 |---|---:|---:|---:|---:|---:|
 | **Apple M4 Pro** | | | | | |
-| `stod`, short (`12345.678`) | 8.9 | 6.0 | 12.1 | 15.3 | **6.4** |
-| `stod`, 17 digits (`%.17g`) | 11.1 | 8.0 | 18.8 | 25.5 | **8.6** |
-| `stod`, shortest repr (JSON) | 11.3 | 8.7 | 19.1 | 48.7 | **8.7** |
-| `stod`, 100 digits | **28.4** | 27.1 | 92.3 | 147.0 | 121.7 |
-| `stof`, 9 digits | 7.3 | 5.8 | 15.7 | 174.3 | **6.2** |
+| `stod`, short (`12345.678`) | 8.8 | 6.0 | 12.2 | 14.9 | **6.4** |
+| `stod`, 17 digits (`%.17g`) | 10.7 | 7.5 | 18.8 | 25.2 | **8.4** |
+| `stod`, shortest repr (JSON) | 11.1 | 8.3 | 19.4 | 56.5 | **8.7** |
+| `stod`, 100 digits | **28.4** | 26.8 | 92.2 | 141.9 | 122.6 |
+| `stof`, 9 digits | 7.3 | 6.0 | 15.2 | 162.8 | **6.2** |
 | **Intel Core i9-9980HK** | | | | | |
-| `stod`, short (`12345.678`) | 21.2 | 14.6 | 29.9 | n/a | **13.5** |
-| `stod`, 17 digits (`%.17g`) | 27.0 | 20.5 | 41.5 | n/a | **19.4** |
-| `stod`, shortest repr (JSON) | 33.8 | 25.3 | 55.4 | n/a | **21.9** |
-| `stod`, 100 digits | **78.8** | 71.7 | 145.8 | n/a | 164.2 |
-| `stof`, 9 digits | 21.5 | 16.9 | 31.6 | n/a | **18.2** |
+| `stod`, short (`12345.678`) | 20.8 | 14.7 | 28.4 | n/a | **13.8** |
+| `stod`, 17 digits (`%.17g`) | 27.0 | 21.0 | 40.6 | n/a | **21.1** |
+| `stod`, shortest repr (JSON) | 34.3 | 26.4 | 53.8 | n/a | **22.0** |
+| `stod`, 100 digits | **77.4** | 71.5 | 145.2 | n/a | 162.8 |
+| `stof`, 9 digits | 23.4 | 17.0 | 31.9 | n/a | **17.9** |
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRICT_STOX_BUILD_BENCH=ON

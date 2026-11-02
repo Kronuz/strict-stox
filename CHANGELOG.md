@@ -103,6 +103,56 @@ release tags yet, so entries are dated.
 
 ### Changed
 
+- **Declined text costs no more than START's `strto*` path, and an integer out of range no longer reaches it.** The
+  final gate (START `f0f7374` against `c1c9bc1`) found seven rows slower than START: `stod` and `stof` of `inf`
+  and `nan` (0.81 to 0.83 on the M4, 0.73 to 0.76 on the i9), of text with leading white space (0.83 to 0.84 and
+  0.82 to 0.85), `stoll` of a 20 digit text (0.86 and 0.88) and, on the i9 only, `stod` of the odd integers from
+  2^53 to 2^54 (0.82). The failed attempt of the fast path and the second parse of `fp_slow` cost 4 to 5 ns of
+  the difference; the wrapper that START already had cost more. Five changes, none of them in `fast_fp`, `fast_int`
+  or `_fast`:
+  - `stof` and `stod` test the first byte at their entry (`stox_nothrow_fp`, `stox_throw_fp`): `starts_decimal`
+    (an optional `-`, then a digit or `.`). Text that cannot be decimal goes straight to `strto*`, as at START, because
+    `fast_fp` and `fp_slow` decline such a first byte alike; the attempt and the second parse no longer run for it.
+    Put inside `_fast`, before or after the attempt, the same test cost the i9 either the `inf` and `nan` rows (0.88
+    to 0.90 of START) or 3% to 8% on the short rows.
+  - The `strto*` path is out of line (`_slow_nothrow`, `_slow_throw`; the base is passed by value), and leaner:
+    `errno` is named once (`int& err`) instead of eight times (on macOS each spelling is a call to `__error()`), a
+    text of 15 bytes or fewer is copied with two overlapping loads instead of a call of `memcpy`, and the
+    `std::string` for texts of 128 bytes and more is built only for them.
+  - An integer out of range is `ERANGE` without `strto*`: after `fast_int` declines, `int_out_of_range` finds that
+    the digits read up to where the range of the type `strto*` returns is left are valid, and `strto*` reads the same
+    digits and sets `ERANGE` whatever follows. The nothrow forms return 0 and store `ERANGE`, `idx` untouched, and the
+    throwing forms throw `std::out_of_range` with the same text. A text that goes on with a non-digit after leaving
+    only the signed range, and a value outside the narrower target type (`stoi` of 3000000000), still take `strto*`.
+    A three-valued `fast_int` did this inside the loop (9.7 ns on the M4) and slowed the integer rows on the i9 by
+    23% to 37%, so `fast_int` is as it was.
+  - `fp_slow` converts an integer of at most 19 digits (`q == 0` once the fraction digits are counted) with one
+    correctly rounded conversion of a 64 bit integer instead of comparing it with the halfway point, so the exact
+    halfway points the table declines from 2^53 on cost one cast. The branch is in `fp_slow`, not in `fast_fp` or
+    its inlined `el_convert`: there it moved the 1 to 9 digit integer row from 4.5 to 4.9 ns on the M4.
+  Before the change and after, in ns per number (START, the previous header `752cf9f`, this one; the median of 3
+  rounds of separate binaries, A/A spread 1 to 11%, the gate bench `bench_gate.cc` built inside one strict hold per machine):
+
+  | Row | M4 Pro | i9-9980HK |
+  |---|---:|---:|
+  | `stod` `inf`, `nan` | 17.3, 21.6, 12.9 | 30.6, 42.1, 28.5 |
+  | `stof` `inf`, `nan` | 17.7, 21.9, 13.0 | 31.5, 41.7, 28.6 |
+  | `stod` `" 1.5"` | 18.7, 22.8, 15.0 | 44.0, 51.0, 36.8 |
+  | `stof` `" 1.5"` | 20.4, 24.4, 16.8 | 47.0, 56.4, 40.7 |
+  | `stoll` 20 digits | 27.7, 33.0, 18.6 | 72.1, 78.8, 41.3 |
+  | `stod` odd integers 2^53..2^54 | 18.1, 16.2, 11.9 | 32.8, 39.2, 28.2 |
+
+  Every row is at least 1.07 times START on both machines except `stod` of 800 digits, which parses all its digits
+  where START cut the text at 63 bytes. Against the previous header, rows lose: on the i9 `stoi` of 1 to 9 digits
+  (10.5 to 13.8 ns, still 3.1 times faster than START; the other integer rows and every other row are within 4%,
+  `stof` subnormal 0.94), on the M4 `stod` of 1 to 9 digit integers (4.4 to 4.8), 17 digits, near `DBL_MAX` and the
+  exact halfway row (`2^52..2^53 + .5`, 18.8 to 19.9: the cost of the new branch of `fp_slow` and the call of the
+  entry) by 5% to 8%, and the rest by under 4%. `test/slow_test.cc` counts the entries into `fp_decline`, the calls of the `strto*` path and the
+  calls of `el_candidate` (new `STRICT_STOX_COUNT_LIBC` counters) and checks the route of every first byte, that an
+  integer out of range is decided without `strto*` (the limits of `strtoll` and `strtoull`, with trailing text, in
+  four bases, the nothrow and throwing forms, `idx` and the caller's `errno`) and that the integer shortcut asks the
+  table nothing; the 17 new mutants (`int_range_*`, `slow_start_*`, `slow_int_*`, 129 in all, among them the reverts
+  of each change) are each killed by it.
 - `Stox::_fast` returns 0 (take the `strto*` path), 1 (the value) or 2 (`ERANGE`). On 2 the nothrow
   forms return 0 and store `ERANGE` without touching `idx`, and the throwing forms throw
   `std::out_of_range` with the same text, as the `strto*` path does.

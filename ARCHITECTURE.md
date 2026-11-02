@@ -45,15 +45,14 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
 
 - integers (`stoi`, `stou`, `stol`, `stoul`, `stoll`, `stoull`, `stoz`): an optional
   `-` (signed types only), then digits of the requested base 2..36, the whole input,
-  1..63 bytes. Whitespace, `+`, `0x`/octal prefixes, base 0 and invalid bases,
-  trailing text, an embedded NUL and `-` on an unsigned function (`strtoul("-1")`
-  wraps) take the `strto*` path. A value that leaves the range of the function's own
-  type (`strtoll` and the like: 64 bits) is `ERANGE` decided in the loop: the digits
-  read so far are valid ones, `strto*` reads the same digits, and its `errno` comes
-  first whatever follows them, so the caller gets 0, `ERANGE` and an untouched `idx`
-  without a copy of the text (`fast_int` returns 2). A value outside the narrower
-  target type (`stoi` of 3000000000) and a text that goes on with a non-digit after
-  leaving the signed range take the `strto*` path;
+  1..63 bytes, no overflow of the function's own type. Whitespace, `+`, `0x`/octal prefixes, base 0 and
+  invalid bases, trailing text, an embedded NUL, `-` on an unsigned function (`strtoul("-1")` wraps) and
+  every overflow take the `strto*` path, which first asks `int_out_of_range`: when the digits read up to
+  where the range of the type `strto*` returns (`strtoll` and the like: 64 bits) is left are valid ones,
+  `strto*` reads the same digits and its `errno` is `ERANGE` whatever follows, so the caller gets 0,
+  `ERANGE` and an untouched `idx` without a copy of the text and a libc call. A text that goes on with a
+  non-digit after leaving only the signed range, and a value outside the narrower target type (`stoi` of
+  3000000000), are left to `strto*`;
 - `stof`/`stod`: `[-]digits[.digits][e[+-]digits]` of any length. The text is reduced to
   `w * 10^q` (`w` the first 19 significant digits) and converted by a table-driven
   Clinger / Eisel-Lemire algorithm (below); what the table cannot decide is converted
@@ -63,8 +62,8 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
   normal value). `inf`, `nan`, hex floats, whitespace, `+`, trailing text, a locale whose
   decimal point is not `.` and a non-default rounding mode take the `strto*` path. A text
   whose first significant byte (after one `-`) is not a digit or `.` is declined by
-  `fast_fp` and by the exact path alike, so after `fast_fp` declines it, `starts_decimal`
-  sends it straight to `strto*` without entering `fp_decline`. `stold` has no fast path;
+  `fast_fp` and by the exact path alike, so the entry of `stof` and `stod` (`stox_nothrow_fp`)
+  sends it straight to `strto*` with `starts_decimal`, without the attempt and without `fp_decline`. `stold` has no fast path;
 - the fast path applies only when the function is exactly `std::strtol` etc.; a
   `Stox` built around a custom function keeps its own semantics.
 

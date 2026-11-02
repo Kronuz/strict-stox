@@ -76,43 +76,81 @@ struct DigitTable {
 };
 inline constexpr DigitTable digits{};
 
-// Integers: [-]digits in `base` (2..36), whole input, < 64 bytes. 1: out holds the value. 0: declined (strto* decides).
-// 2: a value out of range of R. The digits up to where the range was left are all valid, and strto* reads the same digits,
-// so it reports ERANGE whatever follows them.
+// Integers: [-]digits in `base` (2..36), whole input, < 64 bytes, no overflow.
 template <typename R>
-inline int fast_int(R& out, std::string_view s, int base) noexcept {
+inline bool fast_int(R& out, std::string_view s, int base) noexcept {
 	using U = std::make_unsigned_t<R>;
 	const std::size_t n = s.size();
-	if (n == 0 || n >= 64 || base < 2 || base > 36) { return 0; }
+	if (n == 0 || n >= 64 || base < 2 || base > 36) { return false; }
 	const auto* p = reinterpret_cast<const unsigned char*>(s.data());
 	const auto* e = p + n;
 	bool neg = false;
 	if constexpr (std::is_signed_v<R>) {
 		if (*p == '-') {
 			neg = true;
-			if (++p == e) { return 0; }
+			if (++p == e) { return false; }
 		}
 	}
 	U acc = 0;
 	const auto ub = static_cast<U>(base);
 	do {
 		const unsigned d = digits.v[*p];
-		if (d >= static_cast<unsigned>(base)) { return 0; }
+		if (d >= static_cast<unsigned>(base)) { return false; }
 #if defined(__GNUC__) || defined(__clang__)
-		if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }
+		if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return false; }
 #else
-		if (acc > (std::numeric_limits<U>::max() - d) / ub) { return 2; }
+		if (acc > (std::numeric_limits<U>::max() - d) / ub) { return false; }
 		acc = acc * ub + d;
 #endif
 	} while (++p != e);
 	if constexpr (std::is_signed_v<R>) {
 		const U lim = static_cast<U>(std::numeric_limits<R>::max());
-		if (neg ? acc > lim + 1 : acc > lim) { return 2; }
+		if (neg ? acc > lim + 1 : acc > lim) { return false; }
 		out = neg ? static_cast<R>(U(0) - acc) : static_cast<R>(acc);
 	} else {
 		out = static_cast<R>(acc);
 	}
-	return 1;
+	return true;
+}
+
+// ---- float/double ----------------------------------------------------------
+
+// What fast_int declined: true when the text is [-]digits in `base` whose value is out of range of R. The digits read up to where
+// the range is left are valid ones, and strto* reads the same digits, so it reports ERANGE whatever follows them (a signed value
+// that is only too big is known at the end of the digits, so it needs the whole text to be digits). Used on the declined path
+// only: the loop is fast_int's, with the other answers.
+template <typename R>
+inline bool int_out_of_range(std::string_view s, int base) noexcept {
+	using U = std::make_unsigned_t<R>;
+	const std::size_t n = s.size();
+	if (n == 0 || n >= 64 || base < 2 || base > 36) { return false; }
+	const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+	const auto* e = p + n;
+	bool neg = false;
+	if constexpr (std::is_signed_v<R>) {
+		if (*p == '-') {
+			neg = true;
+			if (++p == e) { return false; }
+		}
+	}
+	U acc = 0;
+	const auto ub = static_cast<U>(base);
+	do {
+		const unsigned d = digits.v[*p];
+		if (d >= static_cast<unsigned>(base)) { return false; }
+#if defined(__GNUC__) || defined(__clang__)
+		if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return true; }
+#else
+		if (acc > (std::numeric_limits<U>::max() - d) / ub) { return true; }
+		acc = acc * ub + d;
+#endif
+	} while (++p != e);
+	if constexpr (std::is_signed_v<R>) {
+		const U lim = static_cast<U>(std::numeric_limits<R>::max());
+		return neg ? acc > lim + 1 : acc > lim;
+	} else {
+		return false;
+	}
 }
 
 // ---- float/double ----------------------------------------------------------
@@ -1155,6 +1193,29 @@ inline int fp_decline(R& out, std::string_view s, std::size_t* idx) noexcept {
 }
 
 
+// Copies n < 128 bytes: two overlapping loads and stores for 4 to 15, so no call of memcpy for a short text.
+inline void copy_short(char* d, const char* s, std::size_t n) noexcept {
+	if (n >= 16) {
+		std::memcpy(d, s, n);
+	} else if (n >= 8) {
+		std::uint64_t a, b;
+		std::memcpy(&a, s, 8);
+		std::memcpy(&b, s + n - 8, 8);
+		std::memcpy(d, &a, 8);
+		std::memcpy(d + n - 8, &b, 8);
+	} else if (n >= 4) {
+		std::uint32_t a, b;
+		std::memcpy(&a, s, 4);
+		std::memcpy(&b, s + n - 4, 4);
+		std::memcpy(d, &a, 4);
+		std::memcpy(d + n - 4, &b, 4);
+	} else if (n != 0) {
+		d[0] = s[0];
+		d[n >> 1] = s[n >> 1];
+		d[n - 1] = s[n - 1];
+	}
+}
+
 }  // namespace strict_stox_detail
 
 
@@ -1178,31 +1239,21 @@ inline double counted_strtod(const char* s, char** e) noexcept {
 #define STRICT_STOX_STRTOD std::strtod
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define STRICT_STOX_NOINLINE __attribute__((noinline))
+#else
+#define STRICT_STOX_NOINLINE
+#endif
+
 // Types conversion strict_stox and strict_nothrow_stox
 template <typename F>
 class Stox {
 	const char * const name;
 	F func;
 
-	template <typename T, typename... Args>
-	auto _stox(std::true_type, int& err, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
-#ifdef STRICT_STOX_COUNT_LIBC
-		++strict_stox_detail::strto_calls;
-#endif
-		// strto* needs a NUL-terminated copy of the whole input: short text goes to a stack
-		// buffer, longer text (long zero runs, long decimal strings) to the heap. An embedded
-		// NUL ends the number there, as for any C string.
-		char sbuf[128];
-		std::string heap;
-		const std::size_t size = str.size();
-		char* buf = sbuf;
-		if (size < sizeof(sbuf)) {
-			if (size != 0) { std::memcpy(sbuf, str.data(), size); }
-			sbuf[size] = '\0';
-		} else {
-			heap.assign(str.data(), size);
-			buf = heap.data();
-		}
+	// The call of strto* on the NUL-terminated copy `buf` of the text, and the strict rules for its result.
+	template <typename... Args>
+	auto _strto(int& err, char* buf, std::size_t size, std::size_t* idx, Args&&... args) noexcept {
 		auto end = buf + size;
 		auto ptr = end;
 		auto r = func(buf, &ptr, std::forward<Args>(args)...);
@@ -1218,6 +1269,25 @@ class Stox {
 			return static_cast<decltype(r)>(0);
 		}
 		return r;
+	}
+
+	template <typename T, typename... Args>
+	auto _stox(std::true_type, int& err, const std::string_view& str, std::size_t* idx, Args&&... args) noexcept {
+#ifdef STRICT_STOX_COUNT_LIBC
+		++strict_stox_detail::strto_calls;
+#endif
+		// strto* needs a NUL-terminated copy of the whole input: short text goes to a stack
+		// buffer, longer text (long zero runs, long decimal strings) to the heap. An embedded
+		// NUL ends the number there, as for any C string.
+		const std::size_t size = str.size();
+		char sbuf[128];
+		if (size < sizeof(sbuf)) {
+			strict_stox_detail::copy_short(sbuf, str.data(), size);
+			sbuf[size] = '\0';
+			return _strto(err, sbuf, size, idx, std::forward<Args>(args)...);
+		}
+		std::string heap(str.data(), size);
+		return _strto(err, heap.data(), size, idx, std::forward<Args>(args)...);
 	}
 
 	template <typename T, typename... Args>
@@ -1250,12 +1320,7 @@ class Stox {
 			if constexpr (std::is_integral_v<R>) {
 				const int base = (static_cast<int>(args), ...);
 				R r;
-				const int status = strict_stox_detail::fast_int(r, str, base);
-				if (status != 1) {
-					if (status == 0) { return 0; }
-					out = static_cast<Out>(0);
-					return 2;
-				}
+				if (!strict_stox_detail::fast_int(r, str, base)) { return 0; }
 				if constexpr (!std::is_void_v<T>) {
 					if (r < std::numeric_limits<T>::min() || std::numeric_limits<T>::max() < r) { return 0; }
 				}
@@ -1274,26 +1339,34 @@ class Stox {
 					return 1;
 				}
 				static_assert(std::is_same_v<Out, R>);
-				if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return 0; }
 				return strict_stox_detail::fp_decline<R>(out, str, idx);
 			}
 		}
 		return 0;
 	}
 
-public:
-	Stox(const char* _name, F _func)
-		: name(_name),
-		  func(_func) { }
+	// The text the direct conversion did not take goes to the strto* path, out of line so that the code the clean text runs is the
+	// small function above: an integer out of range is ERANGE (0, idx untouched); anything else is the strto* path, with the
+	// caller's errno saved and cleared around it. `errno` is one object per thread, but a libc may spell it as a call (macOS:
+	// `*__error()`), so it is named once and passed down.
+	template <typename... Args>
+	bool _out_of_range(const std::string_view& str, Args&&... args) const noexcept {
+		if constexpr (sizeof...(Args) == 1 && std::is_invocable_v<F, const char*, char**, int>) {
+			if (!(_is(&std::strtol) || _is(&std::strtoul) || _is(&std::strtoll) || _is(&std::strtoull))) { return false; }
+			using R = std::invoke_result_t<F, const char*, char**, int>;
+			if constexpr (std::is_integral_v<R>) {
+				const int base = (static_cast<int>(args), ...);
+				return strict_stox_detail::int_out_of_range<R>(str, base);
+			}
+		}
+		return false;
+	}
 
-	// The caller's errno is saved and cleared around the strto* path. `errno` is one object per thread, but a libc may spell it as a call
-	// (macOS: `*__error()`), so it is named once here and passed down.
 	template <typename T, typename... Args>
-	auto stox_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args&&... args) {
-		result_t<T, Args...> fast;
-		if (const int status = _fast<T>(fast, str, idx, args...)) {
-			if (errno_save != nullptr) { *errno_save = status == 2 ? ERANGE : 0; }
-			return fast;
+	STRICT_STOX_NOINLINE auto _slow_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args... args) {
+		if (_out_of_range(str, args...)) {
+			if (errno_save != nullptr) { *errno_save = ERANGE; }
+			return static_cast<result_t<T, Args...>>(0);
 		}
 		int& err = errno;
 		const int saved = err;
@@ -1308,12 +1381,8 @@ public:
 	}
 
 	template <typename T, typename... Args>
-	auto stox_throw(const std::string_view& str, std::size_t* idx, Args&&... args) {
-		result_t<T, Args...> fast;
-		if (const int status = _fast<T>(fast, str, idx, args...)) {
-			if (status == 2) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
-			return fast;
-		}
+	STRICT_STOX_NOINLINE auto _slow_throw(const std::string_view& str, std::size_t* idx, Args... args) {
+		if (_out_of_range(str, args...)) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
 		int& err = errno;
 		const int saved = err;
 		err = 0;
@@ -1330,6 +1399,44 @@ public:
 		}
 		return r;
 	}
+
+public:
+	Stox(const char* _name, F _func)
+		: name(_name),
+		  func(_func) { }
+
+	template <typename T, typename... Args>
+	auto stox_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args&&... args) {
+		result_t<T, Args...> fast;
+		if (const int status = _fast<T>(fast, str, idx, args...)) {
+			if (errno_save != nullptr) { *errno_save = status == 2 ? ERANGE : 0; }
+			return fast;
+		}
+		return _slow_nothrow<T>(errno_save, str, idx, args...);
+	}
+
+	template <typename T, typename... Args>
+	auto stox_throw(const std::string_view& str, std::size_t* idx, Args&&... args) {
+		result_t<T, Args...> fast;
+		if (const int status = _fast<T>(fast, str, idx, args...)) {
+			if (status == 2) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
+			return fast;
+		}
+		return _slow_throw<T>(str, idx, args...);
+	}
+	// The entry of the floating point functions: text that cannot start a decimal goes to the strto* path without the attempt of the
+	// direct conversion.
+	template <typename T, typename... Args>
+	auto stox_nothrow_fp(int* errno_save, const std::string_view& str, std::size_t* idx, Args&&... args) {
+		if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return _slow_nothrow<T>(errno_save, str, idx, args...); }
+		return stox_nothrow<T>(errno_save, str, idx, std::forward<Args>(args)...);
+	}
+
+	template <typename T, typename... Args>
+	auto stox_throw_fp(const std::string_view& str, std::size_t* idx, Args&&... args) {
+		if (!strict_stox_detail::starts_decimal(str.data(), str.size())) { return _slow_throw<T>(str, idx, args...); }
+		return stox_throw<T>(str, idx, std::forward<Args>(args)...);
+	}
 };
 #define STOXIFY_BASE(name, func, T) \
 static Stox<decltype(&func)> _strict_##name(#name, func); \
@@ -1342,10 +1449,10 @@ inline auto strict_##name(std::string_view str, std::size_t* idx = nullptr, int 
 #define STOXIFY(name, func, T) \
 static Stox<decltype(&func)> _strict_##name(#name, func); \
 inline auto strict_##name(int* errno_save, std::string_view str, std::size_t* idx = nullptr) noexcept { \
-	return _strict_##name.stox_nothrow<T>(errno_save, str, idx); \
+	return _strict_##name.stox_nothrow_fp<T>(errno_save, str, idx); \
 } \
 inline auto strict_##name(std::string_view str, std::size_t* idx = nullptr) { \
-	return _strict_##name.stox_throw<T>(str, idx); \
+	return _strict_##name.stox_throw_fp<T>(str, idx); \
 }
 STOXIFY_BASE(stoul, std::strtoul, void)
 STOXIFY_BASE(stoull, std::strtoull, void)
@@ -1361,3 +1468,4 @@ STOXIFY(stold, std::strtold, void)
 #undef STOXIFY
 #undef STRICT_STOX_STRTOF
 #undef STRICT_STOX_STRTOD
+#undef STRICT_STOX_NOINLINE

@@ -188,15 +188,19 @@ MUTANTS = {
     "slow_short_limit": ("if (nall <= 19) {", "if (nall <= 20) {"),
     "slow_short_digits": ("if (have_dg) { X.from_digits(dg, nd); } else { X.set(w); }", "X.from_digits(dg, nd);"),
     # ---- the integer range and the first byte route (the API, not the harness: verify.cc does not call them) ----
-    # an integer out of range: the status, the value, idx, and that strto* is not called for it (test/slow_test.cc)
-    "int_range_value": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }",
-                        "if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { out = 1; return 1; }"),
-    "int_range_add": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return 2; }",
-                      "if (__builtin_mul_overflow(acc, ub, &acc)) { return 2; } acc += d;"),
-    "int_range_limit": ("if (neg ? acc > lim + 1 : acc > lim) { return 2; }", "if (neg ? acc > lim + 2 : acc > lim) { return 2; }"),
-    "int_range_idx": ("\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\tif (idx) { *idx = str.size(); }\n\t\t\t\t\treturn 2;"),
-    "int_range_zero": ("\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\tout = static_cast<Out>(1);\n\t\t\t\t\treturn 2;"),
-    "int_range_declined": ("\t\t\t\t\tif (status == 0) { return 0; }\n\t\t\t\t\tout = static_cast<Out>(0);\n\t\t\t\t\treturn 2;", "\t\t\t\t\treturn 0;"),
+    # an integer out of range (the declined path, after fast_int): the answer, idx, the message, and that strto* is not called (test/slow_test.cc)
+    "int_range_mul": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return true; }",
+                      "if (__builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return true; }"),
+    "int_range_add": ("if (__builtin_mul_overflow(acc, ub, &acc) || __builtin_add_overflow(acc, static_cast<U>(d), &acc)) { return true; }",
+                      "if (__builtin_mul_overflow(acc, ub, &acc)) { return true; } acc += d;"),
+    "int_range_limit": ("return neg ? acc > lim + 1 : acc > lim;", "return neg ? acc > lim + 2 : acc > lim;"),
+    "int_range_signed_end": ("return neg ? acc > lim + 1 : acc > lim;", "return false;"),
+    "int_range_idx": ("\t\t\tif (errno_save != nullptr) { *errno_save = ERANGE; }\n\t\t\treturn static_cast<result_t<T, Args...>>(0);",
+                      "\t\t\tif (errno_save != nullptr) { *errno_save = ERANGE; }\n\t\t\tif (idx) { *idx = str.size(); }\n\t\t\treturn static_cast<result_t<T, Args...>>(0);"),
+    "int_range_zero": ("return static_cast<result_t<T, Args...>>(0);\n\t\t}\n\t\tint& err", "return static_cast<result_t<T, Args...>>(1);\n\t\t}\n\t\tint& err"),
+    "int_range_message": ("if (_out_of_range(str, args...)) { throw std::out_of_range(std::string(name) + \": Out of range value: \" + std::string(str)); }",
+                          "if (_out_of_range(str, args...)) { throw std::out_of_range(std::string(name) + \": Cannot convert value: \" + std::string(str)); }"),
+    "int_range_declined": ("return strict_stox_detail::int_out_of_range<R>(str, base);", "return false;"),
     # the first byte of a text that is not decimal: routed to strto*; a decimal text must not be
     "slow_start_no_dot": ("return c - '0' <= 9 || c == '.';", "return c - '0' <= 9;"),
     "slow_start_no_sign": ("\tif (c == '-') {\n\t\tif (n == 1) { return false; }\n\t\tc = static_cast<unsigned char>(p[1]);\n\t}\n", ""),

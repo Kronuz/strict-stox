@@ -102,18 +102,27 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   (glibc: `ERANGE` only if inexact; Apple: always). Do not return `ERANGE` for those two.
   `test/slow_test.cc` counts the calls that reach libc (`-DSTRICT_STOX_COUNT_LIBC`, a seam
   for tests only) and fails if one is not among them.
-- **The route of a text is part of the contract, though not of the result.** After `fast_fp` declines, `starts_decimal`
-  (an optional `-`, then a digit or `.`) sends every other text straight to `strto*`, because `fast_fp` and `fp_slow` decline
-  those anyway and each try costs about a quarter of a `strtod` call. It must never send a text that `fp_slow` converts
-  (`.5`, `-.5`, a digit); `test/slow_test.cc` counts the entries into `fp_decline` and the calls of the `strto*` path
-  (`decline_calls`, `strto_calls`) and checks both directions for every first byte. An integer that leaves the range of
-  `strtol` and the like is `ERANGE` from `fast_int` (status 2) with no `strto*` call; text after the digits that left the
-  range does not matter, text after the digits of a value that is only too big for the signed range is left to `strto*`.
+- **The route of a text is part of the contract, though not of the result.** At the entry of `stof` and `stod`
+  (`stox_nothrow_fp`, `stox_throw_fp`), `starts_decimal` (an optional `-`, then a digit or `.`) sends every other text straight to
+  `strto*`, because `fast_fp` and `fp_slow` decline those anyway and each try costs about a quarter of a `strtod` call. The test
+  is outside `_fast` on purpose: inside it, before or after the attempt, it cost the i9 the `inf` rows or 3% to 8% of the short rows. It must never send a text that `fp_slow` converts
+  (`.5`, `-.5`, a digit); `test/slow_test.cc` counts the entries into `fp_decline`, the calls of `el_candidate` and the calls
+  of the `strto*` path (`decline_calls`, `candidate_calls`, `strto_calls`) and checks both directions for every first byte.
+- **The `strto*` path is out of line and takes the base by value.** `_slow_nothrow` and `_slow_throw` are `noinline`, so the
+  function the clean text runs holds only the direct conversion. A reference to the caller's `base` handed to them would make it a
+  variable in the integer code (`stoi` 10.5 to 14.0 ns on the i9, nothing on the M4: the multiply by 10 is no longer a constant),
+  so they copy it. Marking `stox_nothrow` itself `noinline` cost the M4 8% to 25% on the short rows.
+- **An integer out of range is `ERANGE` without `strto*`, decided after `fast_int` declines.** `_slow_nothrow` and
+  `_slow_throw` ask `int_out_of_range` first: the digits read up to
+  where the range is left are valid ones, and `strto*` reads the same digits and sets `ERANGE` whatever follows. `fast_int` and
+  `_fast` are as they were: a three-valued `fast_int` slowed the integer rows on the i9 by 23% to 37% (`stoi` 10.5 to 13.7 ns)
+  and nothing on the M4. A signed value that is only too big is known at the end of the digits, so a non-digit after them
+  leaves it to `strto*`.
 - **A text of at most 19 digits that is an integer is converted by the cast of a 64-bit integer** (`fp_slow`: `q == 0` after
   the fraction digits), not compared with the halfway point; the table declines the exact halfway points from 2^53, and
   this is where they end. `fast_fp` is not touched for it: a branch there moved the short rows by 2% to 8%.
-- **`errno` is named once per call** (`int& err`): on macOS each spelling of it is a call to `__error()`, about a quarter of
-  a `strtod` call for the declined texts.
+- **`errno` is named once per call** (`int& err`): on macOS each spelling of it is a call to `__error()`, 3 to 5 ns of the
+  18 of a declined text.
 - **The 5^q table is generated.** Edit `tools/gen_pow5.py`, run it with `--write`, and
   the `strict_stox_pow5_table` test (`--check`) keeps the header honest. The binary
   exponent is `(q * 217706) >> 16`; the generator proves it for every `q` in range.

@@ -23,35 +23,35 @@ cmake --build build --target strict_stox_bench
 | Workload | strict-stox | C locale | libc | `std::from_chars` | `fast_float` |
 |---|---:|---:|---:|---:|---:|
 | **Apple M4 Pro** | | | | | |
-| `stod`, short (`12345.678`) | 8.9 | 6.0 | 12.1 | 15.3 | **6.4** |
-| `stod`, 1 to 9 digit integers | **4.9** | 4.8 | 9.4 | 15.3 | 5.7 |
-| `stod`, 17 digits (`%.17g`) | 11.1 | 8.0 | 18.8 | 25.5 | **8.6** |
-| `stod`, 17 digits, any exponent | 12.1 | 9.4 | 21.2 | 49.0 | **8.4** |
-| `stod`, shortest repr (JSON) | 11.3 | 8.7 | 19.1 | 48.7 | **8.7** |
-| `stod`, `1.5e-7`-like | 10.4 | 7.3 | 17.6 | 22.8 | **6.5** |
-| `stod`, 25 to 40 digits | **20.3** | 18.5 | 36.0 | 52.9 | 47.0 |
-| `stod`, 100 digits | **28.4** | 27.1 | 92.3 | 147.0 | 121.7 |
-| `stod`, 800 digits | **126.8** | 125.2 | 938.8 | 1503.8 | 513.3 |
-| `stod`, near `DBL_MAX` | 11.1 | 8.4 | 16.2 | 32.5 | **7.7** |
-| `stof`, short | 9.4 | 7.2 | 13.4 | 19.4 | **8.0** |
-| `stof`, 9 digits | 7.3 | 5.8 | 15.7 | 174.3 | **6.2** |
-| `stof`, 25 to 40 digits | **23.0** | 21.4 | 33.5 | 99.1 | 47.2 |
-| `stof`, near `FLT_MAX` | 9.6 | 7.0 | 12.9 | 20.4 | **6.8** |
+| `stod`, short (`12345.678`) | 8.8 | 6.0 | 12.2 | 14.9 | **6.4** |
+| `stod`, 1 to 9 digit integers | **4.8** | 4.6 | 9.4 | 13.1 | 5.7 |
+| `stod`, 17 digits (`%.17g`) | 10.7 | 7.5 | 18.8 | 25.2 | **8.4** |
+| `stod`, 17 digits, any exponent | 12.1 | 9.2 | 21.0 | 44.5 | **8.5** |
+| `stod`, shortest repr (JSON) | 11.1 | 8.3 | 19.4 | 56.5 | **8.7** |
+| `stod`, `1.5e-7`-like | 10.6 | 7.5 | 17.6 | 23.4 | **6.6** |
+| `stod`, 25 to 40 digits | **20.4** | 18.4 | 35.4 | 52.0 | 46.6 |
+| `stod`, 100 digits | **28.4** | 26.8 | 92.2 | 141.9 | 122.6 |
+| `stod`, 800 digits | **125.8** | 124.7 | 927.1 | 1882.2 | 499.5 |
+| `stod`, near `DBL_MAX` | 11.1 | 8.2 | 16.4 | 31.3 | **7.6** |
+| `stof`, short | 9.5 | 7.0 | 13.8 | 19.8 | **8.0** |
+| `stof`, 9 digits | 7.3 | 6.0 | 15.2 | 162.8 | **6.2** |
+| `stof`, 25 to 40 digits | **22.5** | 20.9 | 33.5 | 85.5 | 46.8 |
+| `stof`, near `FLT_MAX` | 9.6 | 6.8 | 12.7 | 20.3 | **6.7** |
 | **Intel Core i9-9980HK** | | | | | |
-| `stod`, short (`12345.678`) | 21.2 | 14.6 | 29.9 | n/a | **13.5** |
-| `stod`, 1 to 9 digit integers | 13.2 | 12.8 | 20.1 | n/a | **12.2** |
-| `stod`, 17 digits (`%.17g`) | 27.0 | 20.5 | 41.5 | n/a | **19.4** |
-| `stod`, 17 digits, any exponent | 32.5 | 24.1 | 48.1 | n/a | **20.5** |
-| `stod`, shortest repr (JSON) | 33.8 | 25.3 | 55.4 | n/a | **21.9** |
-| `stod`, `1.5e-7`-like | 28.6 | 21.7 | 40.2 | n/a | **16.9** |
-| `stod`, 25 to 40 digits | **70.6** | 61.0 | 96.8 | n/a | 121.2 |
-| `stod`, 100 digits | **78.8** | 71.7 | 145.8 | n/a | 164.2 |
-| `stod`, 800 digits | **245.6** | 239.1 | 713.5 | n/a | 529.3 |
-| `stod`, near `DBL_MAX` | 29.3 | 22.6 | 43.7 | n/a | **17.8** |
-| `stof`, short | 23.5 | 18.3 | 31.5 | n/a | **18.2** |
-| `stof`, 9 digits | 21.5 | 16.9 | 31.6 | n/a | **18.2** |
-| `stof`, 25 to 40 digits | **75.5** | 72.8 | 88.3 | n/a | 122.9 |
-| `stof`, near `FLT_MAX` | 26.2 | 21.0 | 32.9 | n/a | **18.4** |
+| `stod`, short (`12345.678`) | 20.8 | 14.7 | 28.4 | n/a | **13.8** |
+| `stod`, 1 to 9 digit integers | 13.8 | 13.1 | 19.7 | n/a | **13.3** |
+| `stod`, 17 digits (`%.17g`) | 27.0 | 21.0 | 40.6 | n/a | **21.1** |
+| `stod`, 17 digits, any exponent | 33.7 | 24.8 | 48.5 | n/a | **22.6** |
+| `stod`, shortest repr (JSON) | 34.3 | 26.4 | 53.8 | n/a | **22.0** |
+| `stod`, `1.5e-7`-like | 28.8 | 21.8 | 40.8 | n/a | **17.9** |
+| `stod`, 25 to 40 digits | **67.1** | 60.5 | 95.6 | n/a | 126.6 |
+| `stod`, 100 digits | **77.4** | 71.5 | 145.2 | n/a | 162.8 |
+| `stod`, 800 digits | **274.2** | 243.1 | 716.8 | n/a | 550.4 |
+| `stod`, near `DBL_MAX` | 29.4 | 23.1 | 43.4 | n/a | **20.1** |
+| `stof`, short | 23.3 | 17.7 | 31.8 | n/a | **17.9** |
+| `stof`, 9 digits | 23.4 | 17.0 | 31.9 | n/a | **17.9** |
+| `stof`, 25 to 40 digits | **76.4** | 70.2 | 90.0 | n/a | 120.1 |
+| `stof`, near `FLT_MAX` | 26.6 | 20.9 | 33.6 | n/a | **16.9** |
 
 ## The exact path
 
@@ -61,55 +61,58 @@ overflow, underflow) go through the exact path.
 | Workload | strict-stox | C locale | libc | `std::from_chars` | `fast_float` |
 |---|---:|---:|---:|---:|---:|
 | **Apple M4 Pro** | | | | | |
-| `stod`, exact halfway points (`2^52..2^53 + .5`) | 19.2 | 16.6 | 49.7 | 1067.2 | **13.6** |
-| `stod`, odd integers `2^53..2^54` (halfway points) | 16.5 | 5.3 | **11.5** | 620.0 | 13.1 |
-| `stod`, subnormal | 18.2 | 15.6 | 15.2 | 66215.5 | **7.0** |
-| `stod`, overflow and underflow | 21.9 | 19.2 | 18.3 | 30.9 | **6.3** |
-| `stof`, odd integers `2^24..2^25` (halfway points) | 12.4 | 12.7 | 26.6 | 265.2 | **6.7** |
-| `stof`, subnormal | 18.6 | 16.1 | 54.9 | 2141.4 | **6.8** |
-| `stof`, overflow | 17.4 | 15.6 | 15.2 | 33.6 | **7.6** |
+| `stod`, exact halfway points (`2^52..2^53 + .5`) | 19.6 | 16.5 | 48.9 | 1044.1 | **13.6** |
+| `stod`, odd integers `2^53..2^54` (halfway points) | 11.7 | 11.6 | **11.3** | 589.6 | 13.0 |
+| `stod`, subnormal | 18.1 | 15.8 | 14.9 | 65203.7 | **6.9** |
+| `stod`, overflow and underflow | 22.1 | 19.4 | 18.3 | 29.4 | **6.5** |
+| `stof`, odd integers `2^24..2^25` (halfway points) | 8.6 | 8.5 | 26.8 | 270.4 | **6.5** |
+| `stof`, subnormal | 18.5 | 16.4 | 53.5 | 2130.9 | **6.5** |
+| `stof`, overflow | 17.6 | 15.7 | 15.0 | 33.2 | **7.5** |
 | **Intel Core i9-9980HK** | | | | | |
-| `stod`, exact halfway points (`2^52..2^53 + .5`) | 47.2 | 41.0 | 105.3 | n/a | **21.6** |
-| `stod`, odd integers `2^53..2^54` (halfway points) | 39.1 | 39.4 | 25.4 | n/a | **19.4** |
-| `stod`, subnormal | 48.8 | 44.2 | 39.6 | n/a | **15.8** |
-| `stod`, overflow and underflow | 46.6 | 41.5 | 36.2 | n/a | **16.1** |
-| `stof`, odd integers `2^24..2^25` (halfway points) | 35.6 | 29.8 | 56.2 | n/a | **16.6** |
-| `stof`, subnormal | 46.7 | 40.1 | 123.7 | n/a | **18.2** |
-| `stof`, overflow | 42.8 | 37.2 | 34.1 | n/a | **18.9** |
+| `stod`, exact halfway points (`2^52..2^53 + .5`) | 49.8 | 41.0 | 109.0 | n/a | **25.5** |
+| `stod`, odd integers `2^53..2^54` (halfway points) | 30.2 | 28.1 | **24.2** | n/a | 25.4 |
+| `stod`, subnormal | 48.4 | 44.3 | 39.4 | n/a | **17.2** |
+| `stod`, overflow and underflow | 46.6 | 41.1 | 37.2 | n/a | **17.1** |
+| `stof`, odd integers `2^24..2^25` (halfway points) | 22.4 | 20.8 | 64.6 | n/a | **16.5** |
+| `stof`, subnormal | 48.4 | 41.0 | 128.2 | n/a | **16.6** |
+| `stof`, overflow | 43.2 | 36.3 | 35.4 | n/a | **17.8** |
 
 ## Declined and failing text
 
-Text the fast path declines or that fails. A declined text pays the attempt on top of `strtod`, so
-`strict-stox` loses to libc here.
+Text the fast path declines or that fails. It reaches `strtod` or `strtol` through the wrapper: a copy into a
+NUL-terminated buffer, `errno` saved and restored, and the strict rules applied to the result. That costs more than
+the bare libc call of the libc column; there is no failed attempt on top of it. A text whose first byte cannot start
+a decimal (white space, `+`, `i`, `n`) goes there directly, and an integer that overflows is `ERANGE` from the digit
+loop, without libc.
 
 | Workload | strict-stox | libc |
 |---|---:|---:|
 | **Apple M4 Pro** | | |
-| `stoll`, `" 42"` (white space) | 15.8 | **8.9** |
-| `stoll`, `"abc"` (`EINVAL`) | 10.4 | **4.0** |
-| `stoll`, 20 digits (`ERANGE`) | 33.1 | **20.4** |
-| `stod`, `" 1.5"` (white space) | 23.4 | **12.4** |
-| `stod`, `inf` and `nan` | 21.9 | **6.9** |
-| `stof`, `" 1.5"` (white space) | 25.0 | **13.9** |
-| `stof`, `inf` and `nan` | 22.0 | **7.3** |
+| `stoll`, `" 42"` (white space) | 12.9 | **8.3** |
+| `stoll`, `"abc"` (`EINVAL`) | 8.1 | **3.9** |
+| `stoll`, 20 digits (`ERANGE`) | **20.2** | 21.4 |
+| `stod`, `" 1.5"` (white space) | 14.8 | **11.8** |
+| `stod`, `inf` and `nan` | 12.7 | **7.0** |
+| `stof`, `" 1.5"` (white space) | 16.9 | **13.7** |
+| `stof`, `inf` and `nan` | 13.1 | **7.4** |
 | **Intel Core i9-9980HK** | | |
-| `stoll`, `" 42"` (white space) | 40.4 | **27.9** |
-| `stoll`, `"abc"` (`EINVAL`) | 23.7 | **15.2** |
-| `stoll`, 20 digits (`ERANGE`) | 78.8 | **58.0** |
-| `stod`, `" 1.5"` (white space) | 52.2 | **30.8** |
-| `stod`, `inf` and `nan` | 43.2 | **19.2** |
-| `stof`, `" 1.5"` (white space) | 60.0 | **32.5** |
-| `stof`, `inf` and `nan` | 45.2 | **17.6** |
+| `stoll`, `" 42"` (white space) | 38.8 | **29.4** |
+| `stoll`, `"abc"` (`EINVAL`) | 23.8 | **14.5** |
+| `stoll`, 20 digits (`ERANGE`) | **42.2** | 56.6 |
+| `stod`, `" 1.5"` (white space) | 37.5 | **31.2** |
+| `stod`, `inf` and `nan` | 28.6 | **18.1** |
+| `stof`, `" 1.5"` (white space) | 40.2 | **32.9** |
+| `stof`, `inf` and `nan` | 28.4 | **18.3** |
 
 ## Integers
 
 | Workload | strict-stox | libc | `std::from_chars` | abseil |
 |---|---:|---:|---:|---:|
 | **Apple M4 Pro** | | | | |
-| `stoi`, 1 to 9 digits | **6.1** | 11.1 | 7.5 | 6.2 |
-| `stoull`, 1 to 19 digits | **6.3** | 15.4 | 8.9 | n/a |
-| `stoul`, base 16 | **5.2** | 17.6 | 10.9 | n/a |
+| `stoi`, 1 to 9 digits | **5.3** | 11.0 | 7.3 | 5.8 |
+| `stoull`, 1 to 19 digits | **6.3** | 15.4 | 8.8 | n/a |
+| `stoul`, base 16 | **5.6** | 16.9 | 10.6 | n/a |
 | **Intel Core i9-9980HK** | | | | |
-| `stoi`, 1 to 9 digits | **14.2** | 27.8 | 15.2 | 17.9 |
-| `stoull`, 1 to 19 digits | **13.9** | 47.0 | 23.4 | n/a |
-| `stoul`, base 16 | **12.5** | 77.1 | 39.4 | n/a |
+| `stoi`, 1 to 9 digits | **14.2** | 28.2 | 14.7 | 18.9 |
+| `stoull`, 1 to 19 digits | **14.6** | 47.2 | 30.6 | n/a |
+| `stoul`, base 16 | **13.0** | 77.2 | 49.0 | n/a |
