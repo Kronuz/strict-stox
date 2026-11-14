@@ -11,3 +11,7 @@ quiet light strict-stox-fuzz 30 "Parser fuzzing" -- build-fuzz/fuzz/strict_stox_
 ```
 
 Run repeated bounded chunks until the process user and system CPU times total at least 3,600 seconds. Keep generated corpus and crash artifacts in `.scratch/`; the checked-in corpus contains stable seeds.
+
+Known platform crash reproducers live in [regressions/](regressions/).
+Their standalone CTest project reports libc aborts as failures; the fuzzer
+does not suppress or filter the offending inputs.
