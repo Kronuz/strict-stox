@@ -40,6 +40,7 @@ void check(std::size_t size, Throwing&& throwing, Nothrow&& nothrow) {
 }
 }
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
+	const int original_errno = errno;
 	const std::string input(reinterpret_cast<const char*>(data), size);
 	const std::string_view text(input);
 	constexpr int bases[] = {0, 2, 8, 10, 16, 36};
@@ -53,5 +54,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 	[&](int* error, std::size_t* index) { return strict_##name(error, text, index); })
 	CHECK_FLOAT(stof); CHECK_FLOAT(stod); CHECK_FLOAT(stold);
 #undef CHECK_FLOAT
+	errno = original_errno;
 	return 0;
 }
