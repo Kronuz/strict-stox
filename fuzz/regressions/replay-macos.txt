@@ -1,0 +1,62 @@
+Test project /Users/kronuz/code/Kronuz/.scratch/codex/strict-stox-fuzz/.scratch/strtofp-proof
+      Start  1: platform_libc_strtof_original
+ 1/18 Test  #1: platform_libc_strtof_original ...........   Passed    0.25 sec
+      Start  2: platform_libc_strtod_original
+ 2/18 Test  #2: platform_libc_strtod_original ...........Subprocess aborted***Exception:   0.00 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start  3: platform_libc_strtold_original
+ 3/18 Test  #3: platform_libc_strtold_original ..........   Passed    0.00 sec
+      Start  4: platform_strict_stof_original
+ 4/18 Test  #4: platform_strict_stof_original ...........   Passed    0.25 sec
+      Start  5: platform_strict_stof_prefix_original
+ 5/18 Test  #5: platform_strict_stof_prefix_original ....   Passed    0.00 sec
+      Start  6: platform_strict_stod_original
+ 6/18 Test  #6: platform_strict_stod_original ...........Subprocess aborted***Exception:   0.00 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start  7: platform_strict_stod_prefix_original
+ 7/18 Test  #7: platform_strict_stod_prefix_original ....Subprocess aborted***Exception:   0.00 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start  8: platform_strict_stold_original
+ 8/18 Test  #8: platform_strict_stold_original ..........   Passed    0.00 sec
+      Start  9: platform_strict_stold_prefix_original
+ 9/18 Test  #9: platform_strict_stold_prefix_original ...   Passed    0.00 sec
+      Start 10: platform_libc_strtof_minimal
+10/18 Test #10: platform_libc_strtof_minimal ............   Passed    0.00 sec
+      Start 11: platform_libc_strtod_minimal
+11/18 Test #11: platform_libc_strtod_minimal ............Subprocess aborted***Exception:   0.00 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start 12: platform_libc_strtold_minimal
+12/18 Test #12: platform_libc_strtold_minimal ...........   Passed    0.00 sec
+      Start 13: platform_strict_stof_minimal
+13/18 Test #13: platform_strict_stof_minimal ............   Passed    0.02 sec
+      Start 14: platform_strict_stof_prefix_minimal
+14/18 Test #14: platform_strict_stof_prefix_minimal .....   Passed    0.01 sec
+      Start 15: platform_strict_stod_minimal
+15/18 Test #15: platform_strict_stod_minimal ............Subprocess aborted***Exception:   0.01 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start 16: platform_strict_stod_prefix_minimal
+16/18 Test #16: platform_strict_stod_prefix_minimal .....Subprocess aborted***Exception:   0.00 sec
+Assertion failed: ((numerator.msw < denominator.lsw) || (denominator.msw < numerator.lsw)), function divideMPByMP, file strtofp.c, line 1390.
+
+      Start 17: platform_strict_stold_minimal
+17/18 Test #17: platform_strict_stold_minimal ...........   Passed    0.00 sec
+      Start 18: platform_strict_stold_prefix_minimal
+18/18 Test #18: platform_strict_stold_prefix_minimal ....   Passed    0.01 sec
+
+67% tests passed, 6 tests failed out of 18
+
+Total Test time (real) =   0.61 sec
+
+The following tests FAILED:
+	  2 - platform_libc_strtod_original (Subprocess aborted)
+	  6 - platform_strict_stod_original (Subprocess aborted)
+	  7 - platform_strict_stod_prefix_original (Subprocess aborted)
+	 11 - platform_libc_strtod_minimal (Subprocess aborted)
+	 15 - platform_strict_stod_minimal (Subprocess aborted)
+	 16 - platform_strict_stod_prefix_minimal (Subprocess aborted)
+Errors while running CTest
