@@ -156,6 +156,8 @@ uses abseil when CMake finds it; `-DSTRICT_STOX_C_LOCALE=ON` builds the C locale
 
 ## 📚 Documentation
 
+- [The Bag of Holding](https://kronuz.github.io/blog/bag-of-holding/):
+  the Familiars post that covers `strict-stox` among the small helpers.
 - [docs/API.md](docs/API.md): the functions, `idx`, the no-throw form, and the
   locale.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the wrapper, the fast path, the floating
