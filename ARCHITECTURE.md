@@ -59,7 +59,9 @@ buffer. It only accepts what every `strto*` reads the same way, and declines
   exactly, in big integers ("The exact path", below), so no decimal text reaches `strtod`
   except two results whose `errno` differs between libcs (an exactly representable
   subnormal, and a text that rounds up from below the subnormal range into the smallest
-  normal value). `inf`, `nan`, hex floats, whitespace, `+`, trailing text, a locale whose
+  normal value). A decimal number followed by other text is the exact path's too: with an `idx`
+  the number and its length, without one `EINVAL` (`fp_trailing`, in the `strto*` path, before
+  libc). `inf`, `nan`, hex floats, whitespace, `+`, a locale whose
   decimal point is not `.` and a non-default rounding mode take the `strto*` path. A text
   whose first significant byte (after one `-`) is not a digit or `.` is declined by
   `fast_fp` and by the exact path alike, so the entry of `stof` and `stod` (`stox_nothrow_fp`)
@@ -164,13 +166,14 @@ value) or 2 (`ERANGE`: the API returns 0 and sets the error, `idx` untouched, as
 to `5^1093`); an operation that would need more sets a flag and the call is declined.
 
 **What still reaches libc**, besides what is not decimal text (hex floats, `inf`, `nan`,
-whitespace, `+`, trailing text), a rounding mode other than to-nearest and a decimal point
+whitespace, `+`), a rounding mode other than to-nearest and a decimal point
 other than `.`: the two results whose `errno` differs between libcs. glibc sets `ERANGE` for
 a subnormal result only when it is inexact, Apple's libc for every one; the exact path
 returns `ERANGE` for the inexact ones (all libcs agree) and leaves the exactly
 representable ones, and a text that rounds up from below the subnormal range into the
 smallest normal value, to libc. Apple's `strtod` aborts on valid text (such as
-`99004559013337762701442583720290300000000000.00000000000000`); no such text reaches it
+`99004559013337762701442583720290300000000000.00000000000000`, and the numbers of the two
+fixtures in `fuzz/regressions`, which are followed by other text); no such text reaches it
 now, which `test/slow_test.cc` checks.
 
 `test/fp_test.cc` states the property the fast path must keep: whenever `fast_fp` accepts
@@ -188,7 +191,7 @@ own big-integer routine) with tails of digits added or taken so the text lies ju
 below, every binade boundary, the exactly representable subnormals, random text of every length
 and exponent with the two variants of the exact path (with and without the table) compared
 against each other and against libc, `cmp_small` against `cmp_scaled`, and that libc is reached
-only for the cases above. `tools/fp_mutants.py` breaks the implementation in 127 deliberate
+only for the cases above. `tools/fp_mutants.py` breaks the implementation in 134 deliberate
 ways and requires each to fail the tests; the rounding, locale and exact path mutants must fail
 their own test.
 

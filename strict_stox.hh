@@ -937,12 +937,13 @@ inline std::size_t digits10(std::uint64_t w) noexcept {
 }
 
 // 0: not converted (libc decides), 1: out holds the value, 2: out of range (infinity, or zero from a non-zero text, or
-// an inexact subnormal: strtod sets ERANGE).
+// an inexact subnormal: strtod sets ERANGE). With `used`, the result is that of the decimal prefix strtod reads and
+// *used its length; without it, a text with anything after that prefix is 0.
 template <typename R, bool Division = false>
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noinline))
 #endif
-inline int fp_slow(R& out, std::string_view s) noexcept {
+inline int fp_slow(R& out, std::string_view s, std::size_t* used = nullptr) noexcept {
 	using tr = fp_traits<R>;
 	using bits_t = typename tr::bits;
 	constexpr int top = static_cast<int>(sizeof(bits_t) * 8 - 1);
@@ -965,21 +966,27 @@ inline int fp_slow(R& out, std::string_view s) noexcept {
 		fe = p;
 	}
 	if (ie == ib && fb == fe) { return 0; }
+	if (!dot && ie - ib == 1 && *ib == '0' && p != e && (static_cast<unsigned char>(*p) | 0x20) == 'x') { return 0; }  // hex: libc's
 	std::ptrdiff_t q = 0;
-	if (p != e) {
-		if ((static_cast<unsigned char>(*p) | 0x20) != 'e') { return 0; }
-		if (++p == e) { return 0; }
-		const bool eneg = *p == '-';
-		if ((eneg || *p == '+') && ++p == e) { return 0; }
-		for (; p != e; ++p) {
-			const unsigned d = static_cast<unsigned char>(*p) - '0';
-			if (d > 9) { return 0; }
-			if (q < 1000000000000000LL) { q = q * 10 + static_cast<std::ptrdiff_t>(d); }  // saturates: no text is long enough to undo it
+	if (p != e && (static_cast<unsigned char>(*p) | 0x20) == 'e') {  // an exponent, when digits follow; else the prefix ends at 'e'
+		const char* x = p + 1;
+		const bool eneg = x != e && *x == '-';
+		if (x != e && (eneg || *x == '+')) { ++x; }
+		if (x != e && static_cast<unsigned>(static_cast<unsigned char>(*x) - '0') <= 9) {
+			for (; x != e; ++x) {
+				const unsigned d = static_cast<unsigned char>(*x) - '0';
+				if (d > 9) { break; }
+				if (q < 1000000000000000LL) { q = q * 10 + static_cast<std::ptrdiff_t>(d); }  // saturates: no text is long enough to undo it
+			}
+			if (eneg) { q = -q; }
+			p = x;
 		}
-		if (eneg) { q = -q; }
 	}
+	if (p != e && used == nullptr) { return 0; }
 	if (!rounds_to_nearest()) { return 0; }
-	if (dot && !decimal_point_is_dot()) { return 0; }
+	// strtod reads the locale's decimal point: a '.', or any text after the prefix, may be read differently there.
+	if ((dot || p != e) && !decimal_point_is_dot()) { return 0; }
+	if (used != nullptr) { *used = static_cast<std::size_t>(p - s.data()); }
 
 	// The significant digits as D * 10^q. A text of at most 19 digits is the number the scan made. A longer one keeps its first
 	// 768 significant digits, and a final digit 1 when a later one is not zero (see above).
@@ -1183,13 +1190,28 @@ inline int fp_decline(R& out, std::string_view s, std::size_t* idx) noexcept {
 #ifdef STRICT_STOX_COUNT_LIBC
 	++decline_calls;
 #endif
-	const int status = fp_slow<R>(out, s);
+	std::size_t used = 0;
+	const int status = fp_slow<R>(out, s, &used);
 	if (status == 1) {
-		if (idx != nullptr) { *idx = s.size(); }
+		if (idx != nullptr) {
+			*idx = used;
+		} else if (used != s.size()) {
+			return 0;  // text after the number: EINVAL, which fp_trailing decides in the strto* path
+		}
 	} else if (status == 2) {
 		out = 0;
 	}
 	return status;
+}
+
+// True when the text is a decimal number that fp_slow converts followed by other text: EINVAL without an idx, decided without
+// strto*. Only declined text gets here (the strto* path), so the second parse costs nothing on the text the fast path takes.
+template <typename R>
+inline bool fp_trailing(std::string_view s) noexcept {
+	if (!starts_decimal(s.data(), s.size())) { return false; }
+	R out;
+	std::size_t used = 0;
+	return fp_slow<R>(out, s, &used) == 1 && used != s.size();
 }
 
 
@@ -1362,10 +1384,26 @@ class Stox {
 		return false;
 	}
 
+	// A decimal number followed by other text, with no idx: EINVAL without strto* (whose strtod aborts on some such text on macOS).
+	template <typename... Args>
+	bool _invalid_tail(const std::string_view& str, std::size_t* idx) const noexcept {
+		if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
+			using R = std::invoke_result_t<F, const char*, char**>;
+			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
+				if (idx == nullptr && (_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return strict_stox_detail::fp_trailing<R>(str); }
+			}
+		}
+		return false;
+	}
+
 	template <typename T, typename... Args>
 	STRICT_STOX_NOINLINE auto _slow_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args... args) {
 		if (_out_of_range(str, args...)) {
 			if (errno_save != nullptr) { *errno_save = ERANGE; }
+			return static_cast<result_t<T, Args...>>(0);
+		}
+		if (_invalid_tail<Args...>(str, idx)) {
+			if (errno_save != nullptr) { *errno_save = EINVAL; }
 			return static_cast<result_t<T, Args...>>(0);
 		}
 		int& err = errno;
@@ -1383,6 +1421,7 @@ class Stox {
 	template <typename T, typename... Args>
 	STRICT_STOX_NOINLINE auto _slow_throw(const std::string_view& str, std::size_t* idx, Args... args) {
 		if (_out_of_range(str, args...)) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
+		if (_invalid_tail<Args...>(str, idx)) { throw std::invalid_argument(std::string(name) + ": Cannot convert value: " + std::string(str)); }
 		int& err = errno;
 		const int saved = err;
 		err = 0;

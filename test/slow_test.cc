@@ -2,7 +2,7 @@
 //
 // Under round to nearest every decimal text converts without libc: the 64-bit table decides most, the
 // big-integer comparison (strict_stox_detail::fp_slow) the rest, whatever the digits, the exponent or the
-// range. libc is reached for hex floats, inf and nan, whitespace, a sign of "+", trailing text, a rounding
+// range. libc is reached for hex floats, inf and nan, whitespace, a sign of "+", a rounding
 // mode other than nearest, a locale whose decimal point is not '.', and the two results whose errno
 // differs between libcs: an exactly representable subnormal (glibc sets ERANGE only for an inexact one,
 // Apple's libc for every one) and a text that rounds up from below the subnormal range into the smallest
@@ -238,7 +238,7 @@ static void test_curated() {
 // ---- 2. what must reach libc ----------------------------------------------------------------------------
 
 static void test_reach_libc() {
-	static const char* const texts[] = {"0x1p3", "0x1.8p1", "-0X1P-2", "inf", "-inf", "infinity", "nan", "NAN", "nan(0x1)", "  1", "1 ", "+1", "1e", "1e+", "1.5abc", "1,5", "1..2", ".", "-", "", "e5", "1e5x", "0x", "0x.8"};
+	static const char* const texts[] = {"0x1p3", "0x1.8p1", "-0X1P-2", "inf", "-inf", "infinity", "nan", "NAN", "nan(0x1)", "  1", "+1", ".", "-", "", "e5", "0x", "0x.8", "-0x1p3x"};
 	for (const char* c : texts) {
 		const std::string t = c;
 		if (!libc_safe(t)) { continue; }
@@ -247,6 +247,19 @@ static void test_reach_libc() {
 			const Api f = api<float>(t, useidx);
 			if (!d.libc) { FAIL("stod \"%s\" (idx %d): did not reach libc", c, (int)useidx); }
 			if (!f.libc) { FAIL("stof \"%s\" (idx %d): did not reach libc", c, (int)useidx); }
+			if (!oracle::same(d.r, oracle::libc_result<double>(t, useidx), useidx)) { FAIL("stod \"%s\" (idx %d): differs from libc", c, (int)useidx); }
+			if (!oracle::same(f.r, oracle::libc_result<float>(t, useidx), useidx)) { FAIL("stof \"%s\" (idx %d): differs from libc", c, (int)useidx); }
+		}
+	}
+	// A decimal number followed by other text is decided without libc: EINVAL, or with idx the number and its length, or ERANGE.
+	for (const char* c : {"1 ", "1e", "1e+", "1e-x", "1.5abc", "1,5", "1..2", "1e5x", "1.e5.", "00x1", "1e400x", "1e-400 ", "-0.5e", "9007199254740993x", "123456789012345678901234567890.5.5"}) {
+		const std::string t = c;
+		for (bool useidx : {false, true}) {
+			const Api d = api<double>(t, useidx);
+			const Api f = api<float>(t, useidx);
+			if (d.libc || f.libc) { FAIL("\"%s\" (idx %d): a decimal number with a tail reached libc", c, (int)useidx); }
+			double x = 0;
+			if (D::fp_slow<double>(x, t) != 0) { FAIL("fp_slow(\"%s\") without used: converted a text with a tail", c); }
 			if (!oracle::same(d.r, oracle::libc_result<double>(t, useidx), useidx)) { FAIL("stod \"%s\" (idx %d): differs from libc", c, (int)useidx); }
 			if (!oracle::same(f.r, oracle::libc_result<float>(t, useidx), useidx)) { FAIL("stof \"%s\" (idx %d): differs from libc", c, (int)useidx); }
 		}
@@ -754,7 +767,64 @@ static void test_zero_direct() {
 	}
 }
 
+// Apple's strtod aborts (divideMPByMP, strtofp.c:1390) on the decimal numbers of the fuzz/regressions fixtures, which are followed
+// by other text. Their numbers are decided without libc, so neither the fixture nor its number reaches it, with or without idx.
+static std::string read_fixture(const char* name) {
+	std::string path = __FILE__;  // the fixtures are in fuzz/regressions, next to this test's directory
+	path = path.substr(0, path.find_last_of("/\\") + 1) + "../fuzz/regressions/" + name;
+	std::FILE* f = std::fopen(path.c_str(), "rb");
+	if (f == nullptr) {
+		FAIL("cannot read %s", path.c_str());
+		return {};
+	}
+	std::string t;
+	char buf[4096];
+	for (std::size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) != 0;) { t.append(buf, n); }
+	std::fclose(f);
+	return t;
+}
+
+static void test_apple_abort_fixtures() {
+	struct Fixture {
+		const char* name;
+		std::size_t used;  // the length of the decimal number
+		std::uint64_t d;   // its double, by exact rational arithmetic (tools/slow_cases.py); as a float it is ERANGE
+	};
+	for (const Fixture& x : {Fixture{"apple-strtofp-minimal.txt", 208, 0x37012844e69c3b67ULL}}) {
+		const std::string t = read_fixture(x.name);
+		if (t.empty()) { continue; }
+		for (const std::string& s : {t, t.substr(0, x.used)}) {
+			const bool whole = s.size() == x.used;
+			for (bool useidx : {false, true}) {
+				const Api d = api<double>(s, useidx);
+				const Api f = api<float>(s, useidx);
+				if (d.libc || f.libc) { FAIL("%s (%zu bytes, idx %d): reached libc", x.name, s.size(), (int)useidx); }
+				const bool value = whole || useidx;
+				if (value) {
+					if (d.r.err != 0 || d.r.bits != x.d || (useidx && d.r.idx != x.used)) { FAIL("stod %s (%zu bytes, idx %d): errno %d bits %llx idx %zu", x.name, s.size(), (int)useidx, d.r.err, (unsigned long long)d.r.bits, d.r.idx); }
+					if (f.r.err != ERANGE || f.r.bits != 0) { FAIL("stof %s (%zu bytes, idx %d): errno %d, want ERANGE", x.name, s.size(), (int)useidx, f.r.err); }
+				} else if (d.r.err != EINVAL || f.r.err != ERANGE) {
+					FAIL("%s (%zu bytes): stod errno %d (want EINVAL), stof errno %d (want ERANGE)", x.name, s.size(), d.r.err, f.r.err);
+				}
+			}
+		}
+		bool threw = false;
+		try {
+			(void)strict_stod(t);
+		} catch (const std::invalid_argument&) {
+			threw = true;
+		}
+		if (!threw) { FAIL("strict_stod(%s) did not throw std::invalid_argument", x.name); }
+	}
+	// The unminimized fixture: a decimal number, a second '.', and more; the same route.
+	const std::string o = read_fixture("apple-strtofp-original.txt");
+	for (bool useidx : {false, true}) {
+		if (!o.empty() && (api<double>(o, useidx).libc || api<float>(o, useidx).libc)) { FAIL("apple-strtofp-original.txt (idx %d): reached libc", (int)useidx); }
+	}
+}
+
 int main() {
+	test_apple_abort_fixtures();
 	test_curated();
 	test_reach_libc();
 	test_zero_direct<double>();

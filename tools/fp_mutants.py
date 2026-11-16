@@ -123,15 +123,20 @@ MUTANTS = {
     "slow_leading_zeros": ("q -= static_cast<std::ptrdiff_t>(static_cast<std::size_t>(b - fb) + tf);", "q -= static_cast<std::ptrdiff_t>(tf);"),
     "slow_frac_digits": ("\t\t\ttake(fb, tf);\n\t\t\tq -= static_cast<std::ptrdiff_t>(tf);", "\t\t\ttake(fb, tf);"),
     # the syntax it accepts: it must decline what is not plain decimal text
-    "slow_no_digits": ("\tif (ie == ib && fb == fe) { return 0; }\n\tstd::ptrdiff_t q = 0;", "\tstd::ptrdiff_t q = 0;"),
-    "slow_exp_empty": ("\t\tif (++p == e) { return 0; }\n\t\tconst bool eneg", "\t\t++p;\n\t\tconst bool eneg"),
-    "slow_exp_sign_empty": ("if ((eneg || *p == '+') && ++p == e) { return 0; }", "if (eneg || *p == '+') { ++p; }"),
-    "slow_exp_junk": ("\t\t\tif (d > 9) { return 0; }\n\t\t\tif (q < 1000000000000000LL)", "\t\t\tif (d > 9) { break; }\n\t\t\tif (q < 1000000000000000LL)"),
-    "slow_mant_junk": ("\t\tif ((static_cast<unsigned char>(*p) | 0x20) != 'e') { return 0; }\n\t\tif (++p == e) { return 0; }", "\t\tif (++p == e) { return 0; }"),
-    "slow_exp_neg": ("\t\tif (eneg) { q = -q; }\n\t}\n\tif (!rounds_to_nearest()) { return 0; }", "\t}\n\tif (!rounds_to_nearest()) { return 0; }"),
+    "slow_no_digits": ("\tif (ie == ib && fb == fe) { return 0; }\n", ""),
+    "slow_hex": ("&& (static_cast<unsigned char>(*p) | 0x20) == 'x') { return 0; }", "&& *p == 'X') { return 0; }"),
+    "slow_exp_empty": ("if (x != e && static_cast<unsigned>(static_cast<unsigned char>(*x) - '0') <= 9) {", "if (true) {"),
+    "slow_exp_sign_empty": ("if (x != e && (eneg || *x == '+')) { ++x; }", "if (x != e && eneg) { ++x; }"),
+    "slow_exp_junk": ("\t\t\t\tif (d > 9) { break; }\n", "\t\t\t\tif (d > 9) { return 0; }\n"),
+    "slow_mant_junk": ("\tif (p != e && used == nullptr) { return 0; }\n", ""),
+    "slow_exp_neg": ("\t\t\tif (eneg) { q = -q; }\n\t\t\tp = x;", "\t\t\tp = x;"),
+    "slow_used": ("if (used != nullptr) { *used = static_cast<std::size_t>(p - s.data()); }", "if (used != nullptr) { *used = s.size(); }"),
+    "slow_tail_einval": ("\t\t} else if (used != s.size()) {\n\t\t\treturn 0;", "\t\t} else if (used != s.size() && false) {\n\t\t\treturn 0;"),
+    "slow_tail_hook": ("if (_invalid_tail<Args...>(str, idx)) {\n\t\t\tif (errno_save != nullptr) { *errno_save = EINVAL; }", "if (false) {\n\t\t\tif (errno_save != nullptr) { *errno_save = EINVAL; }"),
     # the guards
     "slow_no_rounding_guard": ("\tif (!rounds_to_nearest()) { return 0; }\n", ""),
-    "slow_no_locale_guard": ("\tif (dot && !decimal_point_is_dot()) { return 0; }\n\n\t// The significant digits", "\n\t// The significant digits"),
+    "slow_no_locale_guard": ("\tif ((dot || p != e) && !decimal_point_is_dot()) { return 0; }\n", ""),
+    "slow_tail_locale_guard": ("if ((dot || p != e) && !decimal_point_is_dot()) { return 0; }", "if (dot && !decimal_point_is_dot()) { return 0; }"),
     # the screening of what is certainly infinity or zero
     "slow_no_screen_hi": ("if (lg - 1 >= tr::dec_hi || lg <= tr::dec_lo) { return 2; }", "if (lg <= tr::dec_lo) { return 2; }"),
     "slow_no_screen_lo": ("if (lg - 1 >= tr::dec_hi || lg <= tr::dec_lo) { return 2; }", "if (lg - 1 >= tr::dec_hi) { return 2; }"),
@@ -174,7 +179,7 @@ MUTANTS = {
     "slow_zero_sign": ("out = std::bit_cast<R>(static_cast<bits_t>(static_cast<bits_t>(neg) << top));", "out = std::bit_cast<R>(static_cast<bits_t>(0));"),
     "slow_errno": ("*errno_save = status == 2 ? ERANGE : 0;", "*errno_save = 0;"),
     "slow_idx_on_range": ("\t} else if (status == 2) {\n\t\tout = 0;\n\t}", "\t} else if (status == 2) {\n\t\tout = 0;\n\t\tif (idx != nullptr) { *idx = s.size(); }\n\t}"),
-    "slow_decline_idx": ("\tif (status == 1) {\n\t\tif (idx != nullptr) { *idx = s.size(); }\n\t} else if", "\tif (status == 1) {\n\t} else if"),
+    "slow_decline_idx": ("\t\tif (idx != nullptr) {\n\t\t\t*idx = used;", "\t\tif (idx != nullptr) {\n\t\t\t*idx = s.size();"),
     "slow_decline_zero": ("\t} else if (status == 2) {\n\t\tout = 0;\n\t}", "\t} else if (status == 2) {\n\t}"),
     "slow_no_throw": ("if (status == 2) { throw std::out_of_range(std::string(name) + \": Out of range value: \" + std::string(str)); }", "if (status == 2) { return fast; }"),
     # the big integers
@@ -233,6 +238,7 @@ REQUIRED_KILLER = {
     "locale_first_byte_only": "locale_mock_test",
     "locale_always_checked": "locale_mock_test",
     "slow_no_locale_guard": "locale_mock_test",
+    "slow_tail_locale_guard": "locale_mock_test",
 }
 for _name in MUTANTS:
     if _name.startswith("slow_") or _name.startswith("int_range_"):

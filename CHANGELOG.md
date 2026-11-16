@@ -6,6 +6,18 @@ release tags yet, so entries are dated.
 
 Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://github.com/Kronuz/cpp-libraries/blob/main/docs/UPGRADING-2026-10.md#strict-stox) lists what changes for callers, how to find affected inputs, the commits not to pin, and the speedup.
 
+## 2026-11-16
+
+### Fixed
+
+- **A decimal number followed by other text no longer reaches libc.** `stod` and `stof` gave
+  such text (`1.5abc`, `1e5x`, a number followed by a second `.`) to `strtod`/`strtof`, and Apple's
+  `strtod` aborts the process (`divideMPByMP`, `strtofp.c:1390`) on the numbers of the two
+  `fuzz/regressions` fixtures. The exact path now reads the decimal prefix that `strtod` reads and
+  decides it: with an `idx`, the value and the prefix length; without one, `EINVAL`; `ERANGE` when
+  the prefix is out of range, as before. Results are libc's bit for bit; only the libc call is gone.
+  Hex floats (`0x`), a locale whose decimal point is not `.` and a directed rounding mode still go to libc.
+
 ## 2026-11-01
 
 ### Added

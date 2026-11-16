@@ -13,11 +13,13 @@ assertion, rather than attributing the abort to a wrapper or sanitizer error.
 The original artifact comes from parser fuzzing at `strict-stox:21c104b`. The independent
 replay programs are `strict-stox:21212a1`. The same assertion site on a different input is
 recorded in [the verification report](../../docs/perf/verification.md#defects-of-other-libraries-the-harness-found).
-The product header is unchanged by this regression evidence.
+Since 2026-11-16 strict-stox decides these texts without libc (each is a decimal number followed
+by other text), and `test/slow_test.cc` checks that neither fixture reaches libc.
 
 ## macOS replay results
 
-Both artifacts produce this matrix. The C++ program calls nothrow entry points, with and
+Before 2026-11-16, both artifacts produced this matrix (the strict-stox `double` columns pass
+since then). The C++ program calls nothrow entry points, with and
 without a prefix index. Each conversion runs in a separate process so one abort cannot
 hide another conversion's result.
 

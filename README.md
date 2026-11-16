@@ -26,7 +26,7 @@ anything else people type.
   with a base for the integer ones.
 - **Its own decimal parser.** Floats go through a table of powers of five, and
   what the table cannot decide through an exact big-integer comparison with the
-  halfway point. libc's `strto*` decides the rest: trailing text, white space,
+  halfway point. libc's `strto*` decides the rest: white space,
   `+`, base prefixes, a value outside the narrower target type, `inf`, `nan`,
   hex floats, `stold`, a directed rounding mode, a locale whose decimal point is
   not `.`, and two subnormal results whose `errno` differs between libcs.

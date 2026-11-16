@@ -81,6 +81,16 @@ static void check_slow(const char* where, const char* s, bool expect, int line) 
 	}
 }
 
+// A number followed by other text: the tail may be the start of the decimal point, so the exact path reads it only when the point
+// is '.' (status 0 otherwise).
+template <typename R>
+static void check_tail(const char* where, const char* s, bool expect, int line) {
+	R v = 0;
+	std::size_t used = 0;
+	const int st = D::fp_slow<R>(v, s, &used);
+	if ((st != 0) != expect) { FAIL("%s: fp_slow<%s>(\"%s\", used) %s, expected %s (line %d)", where, std::is_same_v<R, double> ? "double" : "float", s, st != 0 ? "converted" : "declined", expect ? "converted" : "declined", line); }
+}
+
 // The API must equal libc, in whatever locale is current, for every text.
 static void check_api_all(const char* where, const std::vector<std::string>& texts) {
 	for (const std::string& s : texts) {
@@ -133,6 +143,11 @@ static void mock_radixes() {
 			check_taken<float>(where, s, true, __LINE__);
 			check_slow<double>(where, s, true, __LINE__);
 			check_slow<float>(where, s, true, __LINE__);
+		}
+		for (const char* s : commas) {
+			if (s[0] == ',') { continue; }  // no digit before the comma: no number at all
+			check_tail<double>(where, s, reads_dot, __LINE__);
+			check_tail<float>(where, s, reads_dot, __LINE__);
 		}
 		check_api_all(where, all_texts());  // the mock changes no libc answer; whoever answers, it is libc's
 	}

@@ -19,7 +19,7 @@ test/slow_test.cc            The exact decimal path (fp_slow), built with -DSTRI
 test/oracle.hh               libc strtod/strtof and the public API in the strict rules (value, errno, idx), shared by the tests above.
 tools/gen_pow5.py            Generates (--write) and checks (--check) the 5^q table in strict_stox.hh; proves the log2(10) formula over the range.
 tools/slow_cases.py          Expected results for the curated texts of test/slow_test.cc by exact rational arithmetic (round half to even): value bits, or ERANGE, or "libc decides".
-tools/fp_mutants.py          Breaks the fast and exact paths, the first-byte route and the integer range in 127 ways and requires the tests to fail on each; the rounding, locale, exact path and route (slow_*) and integer range (int_range_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
+tools/fp_mutants.py          Breaks the fast and exact paths, the first-byte route and the integer range in 134 ways and requires the tests to fail on each; the rounding, locale, exact path and route (slow_*) and integer range (int_range_*) mutants must fail their own test. Patterns select mutants (slow_*, !slow_*).
 tools/verify.cc              Independent sweep of stod/stof against libc, std::from_chars, fast_float and the previous header (hard cases, halfway points, every float32, random text, rounding modes; own big integer and generators). Hours; not in ctest.
 tools/verify_chain.sh        The commands of verify.cc in sequence, one log each, at nice 19.
 tools/verify_mutants.py      Builds verify.cc against each mutant of fp_mutants.py and requires it to fail (except the decline-more and locale mutants, which only the repo's tests kill).
@@ -101,7 +101,10 @@ is `strict_stox_test`; the registered CTest name is `strict_stox`.
   range into the smallest normal value, the two results whose `errno` differs between libcs
   (glibc: `ERANGE` only if inexact; Apple: always). Do not return `ERANGE` for those two.
   `test/slow_test.cc` counts the calls that reach libc (`-DSTRICT_STOX_COUNT_LIBC`, a seam
-  for tests only) and fails if one is not among them.
+  for tests only) and fails if one is not among them. A decimal number followed by other text
+  counts as decimal text: `fp_slow` reports the length of the prefix strtod reads (`used`),
+  `fp_decline` returns it with an `idx`, and without one `_invalid_tail` makes it `EINVAL` in
+  the `strto*` path before libc, so `_fast` and its callers keep their three results.
 - **The route of a text is part of the contract, though not of the result.** At the entry of `stof` and `stod`
   (`stox_nothrow_fp`, `stox_throw_fp`), `starts_decimal` (an optional `-`, then a digit or `.`) sends every other text straight to
   `strto*`, because `fast_fp` and `fp_slow` decline those anyway and each try costs about a quarter of a `strtod` call. The test
