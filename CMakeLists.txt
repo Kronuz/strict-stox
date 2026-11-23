@@ -78,6 +78,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(strict_stox_slow_test PRIVATE strict_stox)
   add_test(NAME strict_stox_slow COMMAND strict_stox_slow_test)
 
+  # stod/stof against libc over the fuzz corpus and random decimal texts, with white space or a '+' before them.
+  add_executable(strict_stox_lead_diff_test test/lead_diff_test.cc)
+  target_include_directories(strict_stox_lead_diff_test PRIVATE test)
+  target_link_libraries(strict_stox_lead_diff_test PRIVATE strict_stox)
+  add_test(NAME strict_stox_lead_diff COMMAND strict_stox_lead_diff_test WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
   # The locale guard. The mock build overrides the decimal point the header sees (no installed locale
   # needed); the real build runs where a comma locale is installed (STRICT_STOX_TEST_LOCALE names one) and
   # says so when it skips. The C_LOCALE build checks the documented opt-out.
