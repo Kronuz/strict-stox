@@ -166,12 +166,12 @@ inline bool int_out_of_range(std::string_view s, int base) noexcept {
 // the units of the low half); when the rounding decision could depend on that
 // error, the conversion declines. See `el_convert`.
 //
-// A conversion is declined (the caller falls back to strtod) when the result
-// would be subnormal, zero from a non-zero mantissa or infinite (strtod sets
-// ERANGE there), when the rounding is ambiguous, for any other syntax
-// (whitespace, '+', inf, nan, hex floats, trailing text), when the rounding mode
-// is not to nearest, and when the decimal point of the current locale is not '.'
-// (unless STRICT_STOX_C_LOCALE is defined).
+// libc's strto* decides only: hex floats, inf and nan, a text this decimal parser declines (an exact subnormal or
+// the smallest normal value, where the errno of libc differs), the conversions in a rounding mode other than to
+// nearest, those in a locale whose decimal point is not '.' (unless STRICT_STOX_C_LOCALE is defined), and
+// the integers' syntax. Decimal text with C-locale white space or a '+' before it, or text after it, is decided
+// without libc. stold takes the stod path where long double has double's format (LDBL_MANT_DIG == DBL_MANT_DIG:
+// Apple arm64, MSVC) and strtold elsewhere (x86_64 Linux and macOS, aarch64 Linux).
 #if defined(_MSC_VER) && !defined(__clang__)
 #define STRICT_STOX_MSVC 1
 #endif
@@ -1265,6 +1265,21 @@ inline void copy_short(char* d, const char* s, std::size_t n) noexcept {
 }  // namespace strict_stox_detail
 
 
+namespace strict_stox_detail {
+// The type whose exact conversion decides a floating point function: itself for float and double, double for long double where it has
+// double's format (Apple arm64, MSVC: strtold is strtod there), void where long double is wider (strtold decides).
+template <typename R>
+struct fp_exact { using type = void; };
+template <>
+struct fp_exact<float> { using type = float; };
+template <>
+struct fp_exact<double> { using type = double; };
+#if LDBL_MANT_DIG == DBL_MANT_DIG
+template <>
+struct fp_exact<long double> { using type = double; };
+#endif
+}  // namespace strict_stox_detail
+
 #ifdef STRICT_STOX_COUNT_LIBC
 // Test seam: stof and stod call these, which count the texts that reach libc.
 namespace strict_stox_detail {
@@ -1277,12 +1292,18 @@ inline double counted_strtod(const char* s, char** e) noexcept {
 	++libc_calls;
 	return std::strtod(s, e);
 }
+inline long double counted_strtold(const char* s, char** e) noexcept {
+	++libc_calls;
+	return std::strtold(s, e);
+}
 }  // namespace strict_stox_detail
 #define STRICT_STOX_STRTOF strict_stox_detail::counted_strtof
 #define STRICT_STOX_STRTOD strict_stox_detail::counted_strtod
+#define STRICT_STOX_STRTOLD strict_stox_detail::counted_strtold
 #else
 #define STRICT_STOX_STRTOF std::strtof
 #define STRICT_STOX_STRTOD std::strtod
+#define STRICT_STOX_STRTOLD std::strtold
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1355,6 +1376,15 @@ class Stox {
 		if constexpr (std::is_same_v<F, G>) { return func == g; } else { return false; }
 	}
 
+	// The floating point functions the exact path decides: stof, stod, and stold where long double is double.
+	bool _is_exact() const noexcept {
+		return _is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD)
+#if LDBL_MANT_DIG == DBL_MANT_DIG
+			|| _is(&STRICT_STOX_STRTOLD)
+#endif
+			;
+	}
+
 	// Try the direct conversion. 1: `out` holds the final value (already range-checked for T),
 	// exactly what the strto* path returns with errno == 0. 2: the strto* path would set ERANGE
 	// (`out` is 0, `idx` untouched). 0: defer to the strto* path.
@@ -1376,16 +1406,19 @@ class Stox {
 			}
 		} else if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
 			using R = std::invoke_result_t<F, const char*, char**>;
-			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
-				if (!(_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return 0; }
-				R r;
-				if (strict_stox_detail::fast_fp(r, str)) {
+			using E = typename strict_stox_detail::fp_exact<R>::type;
+			if constexpr (!std::is_void_v<E>) {
+				if (!_is_exact()) { return 0; }
+				E r;
+				if (strict_stox_detail::starts_decimal(str.data(), str.size()) && strict_stox_detail::fast_fp(r, str)) {
 					out = static_cast<Out>(r);
 					if (idx) { *idx = str.size(); }
 					return 1;
 				}
-				static_assert(std::is_same_v<Out, R>);
-				return strict_stox_detail::fp_decline<R>(out, str, idx);
+				E o;
+				const int status = strict_stox_detail::fp_decline<E>(o, str, idx);
+				out = static_cast<Out>(o);
+				return status;
 			}
 		}
 		return 0;
@@ -1412,9 +1445,9 @@ class Stox {
 	template <typename... Args>
 	bool _invalid_tail(const std::string_view& str, std::size_t* idx) const noexcept {
 		if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
-			using R = std::invoke_result_t<F, const char*, char**>;
-			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
-				if (idx == nullptr && (_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD))) { return strict_stox_detail::fp_trailing<R>(str); }
+			using E = typename strict_stox_detail::fp_exact<std::invoke_result_t<F, const char*, char**>>::type;
+			if constexpr (!std::is_void_v<E>) {
+				if (idx == nullptr && _is_exact()) { return strict_stox_detail::fp_trailing<E>(str); }
 			}
 		}
 		return false;
@@ -1424,8 +1457,14 @@ class Stox {
 	template <typename R, typename... Args>
 	int _lead(R& out, const std::string_view& str, std::size_t* idx) const noexcept {
 		if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
-			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
-				if (_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD)) { return strict_stox_detail::fp_lead<R>(out, str, idx); }
+			using E = typename strict_stox_detail::fp_exact<R>::type;
+			if constexpr (!std::is_void_v<E>) {
+				if (_is_exact()) {
+					E e;
+					const int status = strict_stox_detail::fp_lead<E>(e, str, idx);
+					out = static_cast<R>(e);
+					return status;
+				}
 			}
 		}
 		return 0;
@@ -1552,9 +1591,10 @@ STOXIFY_BASE(stoll, std::strtoll, void)
 STOXIFY_BASE(stoz, std::strtoull, std::size_t)
 STOXIFY(stof, STRICT_STOX_STRTOF, void)
 STOXIFY(stod, STRICT_STOX_STRTOD, void)
-STOXIFY(stold, std::strtold, void)
+STOXIFY(stold, STRICT_STOX_STRTOLD, void)
 #undef STOXIFY_BASE
 #undef STOXIFY
 #undef STRICT_STOX_STRTOF
 #undef STRICT_STOX_STRTOD
+#undef STRICT_STOX_STRTOLD
 #undef STRICT_STOX_NOINLINE

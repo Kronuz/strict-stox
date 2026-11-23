@@ -26,10 +26,13 @@ anything else people type.
   with a base for the integer ones.
 - **Its own decimal parser.** Floats go through a table of powers of five, and
   what the table cannot decide through an exact big-integer comparison with the
-  halfway point. libc's `strto*` decides the rest: white space,
-  `+`, base prefixes, a value outside the narrower target type, `inf`, `nan`,
-  hex floats, `stold`, a directed rounding mode, a locale whose decimal point is
-  not `.`, and two subnormal results whose `errno` differs between libcs.
+  halfway point, with white space, a `+` or text around the number. libc's
+  `strto*` decides the rest: base prefixes, a value outside the narrower target
+  type, `inf`, `nan`, hex floats, a directed rounding mode, a locale whose
+  decimal point is not `.`, and two subnormal results whose `errno` differs
+  between libcs. `stold` takes the `stod` path where `long double` has
+  `double`'s format (Apple arm64, MSVC) and `strtold` elsewhere (x86_64 and
+  aarch64 Linux, x86_64 macOS).
 - **Checked against libc.** `ctest` compares both paths with libc and with the
   frozen previous header, and the floating point path also with
   `std::from_chars` and in all four rounding modes;

@@ -29,7 +29,9 @@
 #error "build this test with -DSTRICT_STOX_COUNT_LIBC=1"
 #endif
 
+#include <bit>
 #include <cerrno>
+#include <cfloat>
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
@@ -835,7 +837,8 @@ static void test_apple_abort_fixtures() {
 }
 
 // The abort fixtures behind a white space or a '+': the same value, error and idx as without, never libc. stold has no exact path of
-// its own; Apple's strtold returns on these texts, and strict_stold equals it.
+// its own where long double is wider than double (Apple's x86_64 strtold returns on these texts, and strict_stold equals it); where it
+// is double, stold is stod: no libc, the value widened.
 static void test_lead_fixtures() {
 	struct Fixture {
 		std::string text;
@@ -862,16 +865,27 @@ static void test_lead_fixtures() {
 						FAIL("stod lead \"%s\" (%zu bytes): errno %d, want EINVAL", lead, s.size(), d.r.err);
 					}
 				}
-				// stold: the same as libc's strtold on the text
+				// stold: where long double is double it is stod (no libc, the same value widened); elsewhere libc's strtold decides
 				for (bool useidx : {false, true}) {
 					int err = 0;
 					std::size_t idx = 0;
+					const std::size_t before = D::libc_calls;
 					const long double got = strict_stold(&err, s, useidx ? &idx : nullptr);
+#if LDBL_MANT_DIG == DBL_MANT_DIG
+					if (D::libc_calls != before) { FAIL("stold lead \"%s\" (%zu bytes, idx %d): reached libc", lead, s.size(), (int)useidx); }
+					if (whole || useidx) {
+						if (err != 0 || got != static_cast<long double>(std::bit_cast<double>(x.d)) || (useidx && idx != off + x.used)) { FAIL("stold lead \"%s\" (%zu bytes, idx %d): errno %d", lead, s.size(), (int)useidx, err); }
+					} else if (err != EINVAL || got != 0) {
+						FAIL("stold lead \"%s\" (%zu bytes): errno %d, want EINVAL", lead, s.size(), err);
+					}
+#else
+					(void)before;
 					errno = 0;
 					char* end = nullptr;
 					const long double want = std::strtold(s.c_str(), &end);
 					const bool fine = errno == 0 && (useidx || static_cast<std::size_t>(end - s.c_str()) == s.size());
 					if (fine ? (err != 0 || got != want || (useidx && idx != static_cast<std::size_t>(end - s.c_str()))) : (err == 0 || got != 0)) { FAIL("stold lead \"%s\" (%zu bytes, idx %d): errno %d", lead, s.size(), (int)useidx, err); }
+#endif
 				}
 			}
 		}
