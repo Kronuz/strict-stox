@@ -238,7 +238,7 @@ static void test_curated() {
 // ---- 2. what must reach libc ----------------------------------------------------------------------------
 
 static void test_reach_libc() {
-	static const char* const texts[] = {"0x1p3", "0x1.8p1", "-0X1P-2", "inf", "-inf", "infinity", "nan", "NAN", "nan(0x1)", "  1", "+1", ".", "-", "", "e5", "0x", "0x.8", "-0x1p3x"};
+	static const char* const texts[] = {"0x1p3", "0x1.8p1", "-0X1P-2", "inf", "-inf", "infinity", "nan", "NAN", "nan(0x1)", ".", "-", "", "e5", "0x", "0x.8", "-0x1p3x"};
 	for (const char* c : texts) {
 		const std::string t = c;
 		if (!libc_safe(t)) { continue; }
@@ -247,6 +247,17 @@ static void test_reach_libc() {
 			const Api f = api<float>(t, useidx);
 			if (!d.libc) { FAIL("stod \"%s\" (idx %d): did not reach libc", c, (int)useidx); }
 			if (!f.libc) { FAIL("stof \"%s\" (idx %d): did not reach libc", c, (int)useidx); }
+			if (!oracle::same(d.r, oracle::libc_result<double>(t, useidx), useidx)) { FAIL("stod \"%s\" (idx %d): differs from libc", c, (int)useidx); }
+			if (!oracle::same(f.r, oracle::libc_result<float>(t, useidx), useidx)) { FAIL("stof \"%s\" (idx %d): differs from libc", c, (int)useidx); }
+		}
+	}
+	// A decimal number after white space or a '+' is decided without libc, as one after nothing.
+	for (const char* c : {"  1", "+1", " \t\n\v\f\r-1.5e3", "+.5", " 1x", "+1e400", "\n1e-400", "+1.5 "}) {
+		const std::string t = c;
+		for (bool useidx : {false, true}) {
+			const Api d = api<double>(t, useidx);
+			const Api f = api<float>(t, useidx);
+			if (d.libc || f.libc) { FAIL("\"%s\" (idx %d): a decimal number after white space or '+' reached libc", c, (int)useidx); }
 			if (!oracle::same(d.r, oracle::libc_result<double>(t, useidx), useidx)) { FAIL("stod \"%s\" (idx %d): differs from libc", c, (int)useidx); }
 			if (!oracle::same(f.r, oracle::libc_result<float>(t, useidx), useidx)) { FAIL("stof \"%s\" (idx %d): differs from libc", c, (int)useidx); }
 		}
@@ -618,7 +629,7 @@ struct Route {
 };
 static Route route_now() { return Route{D::decline_calls, D::strto_calls, D::libc_calls}; }
 
-// A text whose first significant byte cannot start a decimal goes straight to strto*: it is not tried by fast_fp and does not enter
+// A text whose first byte is neither white space, a sign nor the start of a decimal goes straight to strto*: it is not tried by fast_fp and does not enter
 // fp_decline. A valid decimal text is converted by fast_fp or by the exact path and never reaches strto*.
 template <typename R>
 static void check_route(const std::string& t, bool decimal_start) {
@@ -642,7 +653,7 @@ static void test_first_byte() {
 		const char c = static_cast<char>(b);
 		const bool digit = b >= '0' && b <= '9';
 		const std::string tail = std::string(1, c) + "5";
-		check_route<R>(tail, digit || b == '.' || b == '-');             // "-5" is decimal
+		check_route<R>(tail, digit || b == '.' || b == '-' || b == '+' || b == ' ' || (b >= '\t' && b <= '\r'));  // "-5", "+5", " 5" are decided in the library
 		check_route<R>("-" + tail, digit || b == '.');                   // "--5" is not
 	}
 	// Decimal text of any shape starts the fast path, and the exact path takes what it declines, without strto*.
