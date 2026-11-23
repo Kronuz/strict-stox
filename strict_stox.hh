@@ -1214,6 +1214,30 @@ inline bool fp_trailing(std::string_view s) noexcept {
 	return fp_slow<R>(out, s, &used) == 1 && used != s.size();
 }
 
+// Decimal text after white space or a '+' (the C locale's white space; strtod skips both): the exact path on the rest, so that
+// libc is not asked. 0: not decided here (libc decides); 1: out holds the value and idx the end of the number; 2: ERANGE;
+// 3: EINVAL (text after the number, with no idx).
+template <typename R>
+inline int fp_lead(R& out, std::string_view s, std::size_t* idx) noexcept {
+	std::size_t i = 0;
+	while (i < s.size() && (s[i] == ' ' || (s[i] >= '\t' && s[i] <= '\r'))) { ++i; }
+	const bool plus = i < s.size() && s[i] == '+';
+	if (i == 0 && !plus) { return 0; }  // nothing to skip: the text is decimal or libc's
+	i += plus;
+	if (plus && i < s.size() && s[i] == '-') { return 0; }
+	const std::string_view rest = s.substr(i);
+	if (!starts_decimal(rest.data(), rest.size())) { return 0; }
+	std::size_t used = 0;
+	const int status = fp_slow<R>(out, rest, &used);
+	if (status == 1) {
+		if (idx != nullptr) { *idx = i + used; return 1; }
+		if (i + used != s.size()) { out = 0; return 3; }
+		return 1;
+	}
+	if (status == 2) { out = 0; }
+	return status;
+}
+
 
 // Copies n < 128 bytes: two overlapping loads and stores for 4 to 15, so no call of memcpy for a short text.
 inline void copy_short(char* d, const char* s, std::size_t n) noexcept {
@@ -1396,6 +1420,17 @@ class Stox {
 		return false;
 	}
 
+	// White space or '+' before a decimal number: decided without strto*. 0: the strto* path decides.
+	template <typename R, typename... Args>
+	int _lead(R& out, const std::string_view& str, std::size_t* idx) const noexcept {
+		if constexpr (sizeof...(Args) == 0 && std::is_invocable_v<F, const char*, char**>) {
+			if constexpr (std::is_same_v<R, float> || std::is_same_v<R, double>) {
+				if (_is(&STRICT_STOX_STRTOF) || _is(&STRICT_STOX_STRTOD)) { return strict_stox_detail::fp_lead<R>(out, str, idx); }
+			}
+		}
+		return 0;
+	}
+
 	template <typename T, typename... Args>
 	STRICT_STOX_NOINLINE auto _slow_nothrow(int* errno_save, const std::string_view& str, std::size_t* idx, Args... args) {
 		if (_out_of_range(str, args...)) {
@@ -1405,6 +1440,13 @@ class Stox {
 		if (_invalid_tail<Args...>(str, idx)) {
 			if (errno_save != nullptr) { *errno_save = EINVAL; }
 			return static_cast<result_t<T, Args...>>(0);
+		}
+		{
+			result_t<T, Args...> lead{};
+			if (const int status = _lead<result_t<T, Args...>, Args...>(lead, str, idx)) {
+				if (errno_save != nullptr) { *errno_save = status == 1 ? 0 : (status == 2 ? ERANGE : EINVAL); }
+				return lead;
+			}
 		}
 		int& err = errno;
 		const int saved = err;
@@ -1422,6 +1464,14 @@ class Stox {
 	STRICT_STOX_NOINLINE auto _slow_throw(const std::string_view& str, std::size_t* idx, Args... args) {
 		if (_out_of_range(str, args...)) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
 		if (_invalid_tail<Args...>(str, idx)) { throw std::invalid_argument(std::string(name) + ": Cannot convert value: " + std::string(str)); }
+		{
+			result_t<T, Args...> lead{};
+			if (const int status = _lead<result_t<T, Args...>, Args...>(lead, str, idx)) {
+				if (status == 2) { throw std::out_of_range(std::string(name) + ": Out of range value: " + std::string(str)); }
+				if (status == 3) { throw std::invalid_argument(std::string(name) + ": Cannot convert value: " + std::string(str)); }
+				return lead;
+			}
+		}
 		int& err = errno;
 		const int saved = err;
 		err = 0;
