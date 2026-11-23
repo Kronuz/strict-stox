@@ -52,15 +52,14 @@
 
 // Clean-input fast path.
 //
-// strict_stox wraps the C strto* functions, which are locale aware and accept
-// leading whitespace, '+', base prefixes, inf/nan and hex floats, and the wrapper
-// has to copy the text into a NUL-terminated buffer and save/restore errno.
-// Almost every real input is plainer than that: an optional '-', digits (and for
-// floating point an optional fraction and exponent) and nothing else. For those
-// the result is computed directly, with no copy and no errno traffic. Anything
-// else (and anything that could overflow, lose precision, or that strto* might
-// read differently) is declined and handled by the original strto* path, so
-// results, errno values, idx and exceptions are identical.
+// strict_stox wraps the C strto* functions, which need a NUL-terminated copy of
+// the text and an errno save and restore. Decimal text, after leading white space
+// or a '+' too, is computed directly, with no copy and no errno traffic. strto*
+// decides the rest: base prefixes, a value outside the narrower target type,
+// inf, nan, hex floats, a directed rounding mode, a locale whose decimal point
+// is not '.', two subnormal results whose errno differs between libcs, and stold
+// where long double is wider than double. Results, errno values, idx and
+// exceptions are identical either way.
 namespace strict_stox_detail {
 
 struct DigitTable {
